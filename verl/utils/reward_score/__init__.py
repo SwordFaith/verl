@@ -30,6 +30,9 @@ def _default_compute_score(data_source, solution_str, ground_truth, extra_info=N
     elif data_source in ['codecontests', 'apps', 'codeforces', 'taco']:
         from . import prime_code
         res = prime_code.compute_score(solution_str, ground_truth, continuous=True)
+    elif data_source in ['agentica-org/DeepScaleR-Preview-Dataset']:
+        from deepscaler.rewards.math_reward import deepscaler_reward_fn
+        res = deepscaler_reward_fn(solution_str, ground_truth)
     else:
         raise NotImplementedError
 
