@@ -1,7 +1,7 @@
 data:
   tokenizer: null
-  train_files: /user/longxiang1/data/gsm8k_verl_sgl_multi_turn_preprocessed/train.parquet
-  val_files: /user/longxiang1/data/gsm8k_verl_sgl_multi_turn_preprocessed/test.parquet
+  train_files: /root/data/gsm8k/train.parquet
+  val_files: /root/data/gsm8k//test.parquet
   prompt_key: prompt
   max_prompt_length: 1024
   max_response_length: 1024
@@ -17,7 +17,7 @@ data:
 actor_rollout_ref:
   hybrid_engine: True
   model:
-    path: /user/longxiang1/models/Qwen/Qwen2.5-7B-Instruct
+    path: Qwen/Qwen2.5-7B-Instruct
     external_lib: null
     override_config: { }
     enable_gradient_checkpointing: True
@@ -119,7 +119,7 @@ critic:
     warmup_style: constant  # select from constant/cosine
     total_training_steps: -1  # must be override by program
   model:
-    path: /user/longxiang1/models/Qwen/Qwen2.5-7B-Instruct
+    path: Qwen/Qwen2.5-7B-Instruct
     tokenizer_path: ${actor_rollout_ref.model.path}
     override_config: { }
     external_lib: ${actor_rollout_ref.model.external_lib}

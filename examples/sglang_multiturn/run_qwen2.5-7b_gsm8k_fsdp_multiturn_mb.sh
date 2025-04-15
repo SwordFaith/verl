@@ -14,5 +14,5 @@ python3 -m uv pip install -i $PIP_INDEX_URL -e .
 
 ulimit -n 65535
 python3 -m verl.trainer.main_ppo \
-    --config-path=/user/longxiang1/workspace/verl/examples/sglang_multiturn/config \
+    --config-path=/root/verl/examples/sglang_multiturn/config \
     --config-name='gsm8k_multiturn_grpo'
