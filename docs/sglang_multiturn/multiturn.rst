@@ -35,6 +35,6 @@ GSM8K Multi-turn Training Performance
 
 See the training performance of multi-turn rollout on the GSM8K task HERE_.
 
-.. _HERE: https://wandb.ai/zhaochenyang20/gsm8k_async_rl/runs/1ro1r7om?nw=nwuserzhaochenyang20
+.. _HERE: https://wandb.ai/zhaochenyang20/gsm8k_async_rl/runs/5jmjno2y?nw=nwuserzhaochenyang20
 
 .. _GSM8KTool_example_configuration: ../../examples/sglang_multiturn/config/tool_config/gsm8k_tool_config.yaml
