@@ -622,22 +622,11 @@ class AsyncSGLangRollout(BaseRollout):
         response_loss_mask = pad_sequence(response_loss_mask, batch_first=True, padding_value=0)
         if response_loss_mask.shape[1] < self.config.response_length:
             response_loss_mask = pad_sequence_to_length(response_loss_mask, self.config.response_length, 0)
-        # reward_scores = {tool_name: torch.tensor(scores) for tool_name, scores in reward_scores.items()}
-        # print(f"{reward_scores=}")
         input_ids = torch.cat((prompt_ids, response_ids), dim=-1)
         attention_mask = torch.cat((prompt_attention_mask, response_attention_mask), dim=-1)
         position_ids = torch.cat((prompt_position_ids, response_position_ids), dim=-1)
         loss_mask = torch.cat((prompt_loss_mask, response_loss_mask), dim=-1)
-        # print(f"{list(reward_scores.values())=}")
-        # if len(list(reward_scores.values())) > 0:
-        #     reward_scores_tensor = torch.stack(list(reward_scores.values()), dim=1)
-        #     tool_names = list(reward_scores.keys())
-        # else:
-        #     reward_scores_tensor = torch.zeros((len(req_list), 1))
-        #     tool_names = [["dummy_tool_name",]] * len(req_list)
-        # print(f"{reward_scores_tensor=}")
-        # print(f"{prompt_ids.shape=}, {response_ids.shape=}, {input_ids.shape=}, {attention_mask.shape=}, {position_ids.shape=}, {loss_mask.shape=}, {len(reward_scores)=}, {len(sorted_output_req_list)=}, {len(messages)=}")
-        
+       
         if self._tp_rank == 0:
             print(f"examine first request:\n{sorted_output_req_list[0].messages=}\n{self.tokenizer.decode(sorted_output_req_list[0].input_ids)=}")
         # Construct the batch data
