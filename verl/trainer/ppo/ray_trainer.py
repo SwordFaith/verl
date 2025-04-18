@@ -423,7 +423,7 @@ class RayPPOTrainer(object):
         else:
             dataset_cls = RLHFDataset
 
-        need_tools_kwargs = self.config.actor_rollout_ref.rollout.tool_kwargs.tools_config_file is not None
+        need_tools_kwargs = self.config.actor_rollout_ref.rollout.multi_turn.tool_config_path is not None
         self.train_dataset = dataset_cls(
             data_files=self.config.data.train_files,
             tokenizer=self.tokenizer,
@@ -945,7 +945,7 @@ class RayPPOTrainer(object):
                             batch, kl_metrics = apply_kl_penalty(batch,
                                                                  kl_ctrl=self.kl_ctrl_in_reward,
                                                                  kl_penalty=self.config.algorithm.kl_penalty,
-                                                                 multi_turn=self.config.actor_rollout_ref.rollout.get('multi_turn', False))
+                                                                 multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enbaled)
                             metrics.update(kl_metrics)
                         else:
                             batch.batch['token_level_rewards'] = batch.batch['token_level_scores']

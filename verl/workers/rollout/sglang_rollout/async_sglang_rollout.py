@@ -136,11 +136,16 @@ class AsyncSGLangRollout(BaseRollout):
         """
         super().__init__()
         self.config = config
-        
+        # currently max_turns stand for max number of tool calls
+        if self.config.multi_turn.max_turns is None:
+            self.max_turns = self.config.max_model_len // 3 
+        else:
+            self.max_turns = self.config.multi_turn.max_turns
+
         tool_list = None
-        if config.get("tool_kwargs") and config.tool_kwargs.get("tools_config_file", None) is not None:
+        if config.multi_turn.tool_config_path is not None:
             from omegaconf import OmegaConf
-            def initialize_tools(tools_config) -> List:
+            def initialize_tools(tool_config) -> List:
                 import sys
                 import importlib.util
                 from typing import List
@@ -148,7 +153,7 @@ class AsyncSGLangRollout(BaseRollout):
 
                 tool_list = []
                 
-                for tool_config in tools_config.tools:
+                for tool_config in tool_config.tools:
                     cls_name = tool_config.class_name
                     module_name, class_name = cls_name.rsplit(".", 1)
                     
@@ -173,9 +178,9 @@ class AsyncSGLangRollout(BaseRollout):
                 
                 return tool_list
  
-            tools_config_file = config.tool_kwargs.tools_config_file
-            tools_config = OmegaConf.load(tools_config_file)
-            tool_list = initialize_tools(tools_config)           
+            tool_config_path = config.multi_turn.tool_config_path
+            tool_config = OmegaConf.load(tool_config_path)
+            tool_list = initialize_tools(tool_config)           
 
         if tool_list is not None:
             self._tool_schemas = [tool.get_openai_tool_schema().model_dump() for tool in tool_list]
@@ -217,9 +222,6 @@ class AsyncSGLangRollout(BaseRollout):
             f"max_model_len should be greater than total sequence length (prompt_length + response_length): {self.config.max_model_len} >= {self.config.prompt_length} + {self.config.response_length}"
         assert (model_hf_config.max_position_embeddings >= self.config.max_model_len), \
             "model context length should be greater than total sequence length"
-        # currently max_turns stand for max number of tool calls
-        if self.config.get("max_turns", None) is None:
-            self.config.max_turns = self.config.max_model_len // 3
 
         tp_size = tensor_parallel_size
         world_size = int(os.getenv("WORLD_SIZE", "-1"))
@@ -413,7 +415,7 @@ class AsyncSGLangRollout(BaseRollout):
         output = None
         
         current_turns = 0
-        while current_turns < self.config.max_turns:
+        while current_turns < self.max_turns:
             if _req.state == AsyncRolloutRequestStateEnum.PENDING:
                 if _req.tools is not None:
                     tool_creation_coroutines = []
@@ -518,7 +520,7 @@ class AsyncSGLangRollout(BaseRollout):
                         _req.add_assistant_message(self.tokenizer, content)
                         break
 
-        if current_turns >= self.config.max_turns:
+        if current_turns >= self.max_turns:
             finish_reason_type = FinishReasonTypeEnum.STOP
         # Calculate the reward for each tool
         async def calc_reward_and_release_fn(name: str, tool: BaseTool):

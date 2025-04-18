@@ -10,8 +10,9 @@ To enable multi-turn rollout, make sure to configure the following fields in you
 
     actor_rollout_ref: 
         rollout: 
-            multi_turn: True
             name: "sglang_async"
+            multi_turn: 
+                enable: True
 
 These configuration activates the sglang_async engine for multi-turn interaction during rollout.
 
@@ -25,8 +26,8 @@ To do so, use the following format in your rollout config:
 
     actor_rollout_ref:
         rollout:
-            tool_kwargs:
-                tools_config_file: <path_to_tool_yaml_file>
+            multi_turn:
+                tool_config_path: <path_to_tool_yaml_file>
 
 This allows integration of customized tool behaviors during actor rollout steps. You may refer to the GSM8KTool_example_configuration_ for guidance.
 
