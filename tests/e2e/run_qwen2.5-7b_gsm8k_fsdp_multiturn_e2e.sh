@@ -86,7 +86,7 @@ python3 -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.val_kwargs.temperature=0 \
   actor_rollout_ref.rollout.val_kwargs.n=1 \
   actor_rollout_ref.rollout.val_kwargs.do_sample=False \
-  actor_rollout_ref.rollout.multi_turn.enable=3 \
+  actor_rollout_ref.rollout.multi_turn.enable=True \
   actor_rollout_ref.rollout.multi_turn.max_turns=3 \
   actor_rollout_ref.rollout.multi_turn.tool_config_path="examples/sglang_multiturn/config/tool_config/gsm8k_tool_config.yaml" \
   critic.strategy=fsdp \
