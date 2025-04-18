@@ -149,16 +149,16 @@ import torch
 from verl.utils.torch_functional import masked_mean
 
 
-def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, kl_penalty='kl', multi_turn=False):
-    responses = data.batch['responses']
+def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, kl_penalty="kl", multi_turn=False):
+    responses = data.batch["responses"]
     response_length = responses.size(1)
     token_level_scores = data.batch["token_level_scores"]
     batch_size = data.batch.batch_size[0]
     if multi_turn:
-        loss_mask = data.batch['loss_mask']
+        loss_mask = data.batch["loss_mask"]
         response_mask = loss_mask[:, -response_length:]
     else:
-        attention_mask = data.batch['attention_mask']
+        attention_mask = data.batch["attention_mask"]
         response_mask = attention_mask[:, -response_length:]
 
     # compute kl between ref_policy and current policy
@@ -476,12 +476,12 @@ class RayPPOTrainer:
             tokenizer=self.tokenizer,
             processor=self.processor,
             config=self.config.data,
-            need_tools_kwargs=need_tools_kwargs
+            need_tools_kwargs=need_tools_kwargs,
         )
 
-        assert self.train_dataset.truncation == self.config.data.get(
-            'truncation', 'error'
-        ), f'dataset truncation {self.train_dataset.truncation} must be the same as config {self.config.data.get("truncation", "error")}'
+        assert self.train_dataset.truncation == self.config.data.get("truncation", "error"), (
+            f"dataset truncation {self.train_dataset.truncation} must be the same as config {self.config.data.get('truncation', 'error')}"
+        )
         # use sampler for better ckpt resume
         if self.config.data.shuffle:
             train_dataloader_generator = torch.Generator()
@@ -504,7 +504,7 @@ class RayPPOTrainer:
             tokenizer=self.tokenizer,
             processor=self.processor,
             config=self.config.data,
-            need_tools_kwargs=need_tools_kwargs
+            need_tools_kwargs=need_tools_kwargs,
         )
         self.val_dataloader = StatefulDataLoader(
             dataset=self.val_dataset,
@@ -589,16 +589,15 @@ class RayPPOTrainer:
             input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
             sample_inputs.extend(input_texts)
 
-
-            non_tensor_batch_keys = ['raw_prompt_ids']
-            if 'multi_modal_inputs' in test_batch.non_tensor_batch.keys():
-                non_tensor_batch_keys.extend(['multi_modal_data', 'multi_modal_inputs'])
-            if 'raw_prompt' in test_batch.non_tensor_batch.keys():
-                non_tensor_batch_keys.append('raw_prompt')
-            if 'tools_kwargs' in test_batch.non_tensor_batch.keys():
-                non_tensor_batch_keys.append('tools_kwargs')
+            non_tensor_batch_keys = ["raw_prompt_ids"]
+            if "multi_modal_inputs" in test_batch.non_tensor_batch.keys():
+                non_tensor_batch_keys.extend(["multi_modal_data", "multi_modal_inputs"])
+            if "raw_prompt" in test_batch.non_tensor_batch.keys():
+                non_tensor_batch_keys.append("raw_prompt")
+            if "tools_kwargs" in test_batch.non_tensor_batch.keys():
+                non_tensor_batch_keys.append("tools_kwargs")
             test_gen_batch = test_batch.pop(
-                batch_keys=['input_ids', 'attention_mask', 'position_ids'],
+                batch_keys=["input_ids", "attention_mask", "position_ids"],
                 non_tensor_batch_keys=non_tensor_batch_keys,
             )
 
@@ -911,23 +910,20 @@ class RayPPOTrainer:
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
-                # print(f"batch_dict: {batch_dict}")
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
-                # print(f"DataProto.from_single_dict(batch_dict): {batch}")
 
                 # pop those keys for generation
-                non_tensor_batch_keys = ['raw_prompt_ids']
-                if 'multi_modal_inputs' in batch.non_tensor_batch.keys():
-                    non_tensor_batch_keys.extend(['multi_modal_data', 'multi_modal_inputs'])
-                if 'raw_prompt' in batch.non_tensor_batch.keys():
-                    non_tensor_batch_keys.append('raw_prompt')
-                if 'tools_kwargs' in batch.non_tensor_batch.keys():
-                    non_tensor_batch_keys.append('tools_kwargs')
+                non_tensor_batch_keys = ["raw_prompt_ids"]
+                if "multi_modal_inputs" in batch.non_tensor_batch.keys():
+                    non_tensor_batch_keys.extend(["multi_modal_data", "multi_modal_inputs"])
+                if "raw_prompt" in batch.non_tensor_batch.keys():
+                    non_tensor_batch_keys.append("raw_prompt")
+                if "tools_kwargs" in batch.non_tensor_batch.keys():
+                    non_tensor_batch_keys.append("tools_kwargs")
                 gen_batch = batch.pop(
-                    batch_keys=['input_ids', 'attention_mask', 'position_ids'],
+                    batch_keys=["input_ids", "attention_mask", "position_ids"],
                     non_tensor_batch_keys=non_tensor_batch_keys,
                 )
-
 
                 is_last_step = self.global_steps >= self.total_training_steps
 
@@ -935,7 +931,6 @@ class RayPPOTrainer:
                     # generate a batch
                     with _timer("gen", timing_raw):
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-                    # print(f"gen_batch_output: {gen_batch_output}")
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer("gen_max", timing_raw):
                             gen_baseline_batch = deepcopy(gen_batch)
@@ -1023,10 +1018,12 @@ class RayPPOTrainer:
 
                         # compute rewards. apply_kl_penalty if available
                         if self.config.algorithm.use_kl_in_reward:
-                            batch, kl_metrics = apply_kl_penalty(batch,
-                                                                 kl_ctrl=self.kl_ctrl_in_reward,
-                                                                 kl_penalty=self.config.algorithm.kl_penalty,
-                                                                 multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enbaled)
+                            batch, kl_metrics = apply_kl_penalty(
+                                batch,
+                                kl_ctrl=self.kl_ctrl_in_reward,
+                                kl_penalty=self.config.algorithm.kl_penalty,
+                                multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enbaled,
+                            )
 
                             metrics.update(kl_metrics)
                         else:

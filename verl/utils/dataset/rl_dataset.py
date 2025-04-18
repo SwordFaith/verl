@@ -13,13 +13,11 @@
 # limitations under the License.
 
 import copy
+import logging
 import os
 import re
-from typing import List, Union, Optional
-import copy
-import datasets
-import logging
 from collections import defaultdict
+from typing import List, Optional, Union
 
 import datasets
 import numpy as np
@@ -65,7 +63,7 @@ class RLHFDataset(Dataset):
         tokenizer: PreTrainedTokenizer,
         config: DictConfig,
         processor: Optional[ProcessorMixin] = None,
-        need_tools_kwargs=False
+        need_tools_kwargs=False,
     ):
         if not isinstance(data_files, (List, ListConfig)):
             data_files = [data_files]
