@@ -224,11 +224,9 @@ def test_sglang_rollout():
         device_mesh=fsdp_device_mesh,
     )
     print(f"FSDP model initialized on device {fsdp_model.device}")
-    "======================= torchrun需要删掉这个 ======================="
     for k in ["TORCHELASTIC_USE_AGENT_STORE"]:
         if k in os.environ:
             del os.environ[k]
-    "======================= torchrun需要删掉这个 ======================="
 
     # initialize rollout and sharding manager
     rollout = AsyncSGLangRollout(
