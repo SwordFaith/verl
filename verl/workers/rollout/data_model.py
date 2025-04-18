@@ -113,20 +113,23 @@ class AsyncRolloutRequest(BaseModel):
             content_token_ids = tokenizer.encode(content, add_special_tokens=False)
             if self.input_ids[-len(prefix_token_ids):] == prefix_token_ids:
                 append_token_ids = content_token_ids
+                _loss_mask = [1] * len(content_token_ids)
             elif self.input_ids[-len(suffix_token_ids):] == suffix_token_ids:
                 append_token_ids = prefix_token_ids + content_token_ids
+                _loss_mask = [0] * len(prefix_token_ids) +  [1] * len(content_token_ids)
             else:
                 max_len = max(len(prefix_token_ids), len(suffix_token_ids))
                 raise ValueError(f"Unsupported end of message format: {tokenizer.decode(self.input_ids[-max_len:])}, {tokenizer.decode(self.input_ids)=}, {self.messages=}")
             if not alreadyover_long:
                 append_token_ids += suffix_token_ids
+                _loss_mask += [1] * len(suffix_token_ids)
             self.input_ids += append_token_ids
             _attention_mask = [1] * len(append_token_ids)
             self.attention_mask += _attention_mask
             _delta_position_ids = compute_position_id_with_mask(torch.tensor(_attention_mask)).tolist()
             last_position_id = self.position_ids[-1]
             _position_ids = [pos_id + last_position_id for pos_id in _delta_position_ids]
-            self.loss_mask += [1] * len(append_token_ids)
+            self.loss_mask += _loss_mask
             self.position_ids += _position_ids
         else:
             raise ValueError(f"Unsupported format: {format}")
