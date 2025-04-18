@@ -46,7 +46,9 @@ if __name__ == "__main__":
     train_dataset = dataset["train"]
     test_dataset = dataset["test"]
 
-    instruction_following = "You must use the `calc_gsm8k_reward` tool to calculate the reward of your answer(1.0 if your answer is correct, 0.0 if your answer is incorrect) before submitting it at least once and refine your answer if necessary. Put your final answer in the format of `#### <answer>`."
+    instruction_following = "You must use the `calc_gsm8k_reward` tool to calculate the reward of your \
+        answer(1.0 if your answer is correct, 0.0 if your answer is incorrect) before submitting it at \
+        least once and refine your answer if necessary. Put your final answer in the format of `#### <answer>`."
 
     # add a row to each data item that represents a unique id
     def make_map_fn(split):

@@ -167,7 +167,6 @@ def test_sglang_rollout():
         "The founder of Apple is",
         "What's your name?",
     ]
-    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
     prompts = tokenizer(preencode_prompts, return_tensors="pt", padding=True)
     input_ids = prompts["input_ids"]
     attention_mask = prompts["attention_mask"]
@@ -213,11 +212,9 @@ def test_sglang_rollout():
         device_mesh=fsdp_device_mesh,
     )
     print(f"FSDP model initialized on device {fsdp_model.device}")
-    "======================= torchrun需要删掉这个 ======================="
     for k in ["TORCHELASTIC_USE_AGENT_STORE"]:
         if k in os.environ:
             del os.environ[k]
-    "======================= torchrun需要删掉这个 ======================="
 
     # initialize rollout and sharding manager
     rollout = SGLangRollout(
