@@ -1,4 +1,4 @@
-# Copyright 2023-2024 SGLang Team
+# Copyright 2023-2024 SGLang Team & ModelBest Inc.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -169,7 +169,6 @@ def test_sglang_rollout():
     ]
     messages = np.asarray([[{"role": "user", "content": prompt}] for prompt in preencode_prompts])
     print(f"messages: {messages}")
-    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
     prompts = [
         tokenizer.apply_chat_template(message, tokenize=False, add_generation_prompt=True) for message in messages
     ]
@@ -281,14 +280,6 @@ def test_sglang_rollout():
     # compare results
     sglang_response_tokens = tokenizer.batch_decode(sglang_output.batch["responses"])
     print(f"SGLang response: {sglang_response_tokens}")
-    # dp_size = inference_device_mesh_cpu["dp"].size()
-    # dp_rank = inference_device_mesh_cpu["dp"].get_local_rank()
-    # tp_rank = inference_device_mesh_cpu["infer_tp"].get_local_rank()
-    # part_size = len(hf_response_tokens) // (dp_size * tensor_parallel_size)
-    # start_idx = (dp_rank * tensor_parallel_size + tp_rank) * part_size
-    # end_idx = start_idx + part_size
-    # print(f"dp_size: {dp_size}, tp_rank: {tp_rank}, part_size: {part_size}, start_idx: {start_idx}, end_idx: {end_idx}")
-    # hf_response_tokens = hf_response_tokens[start_idx:end_idx]
     assert are_lists_similar(hf_response_tokens, sglang_response_tokens), "Responses differ more than 10%"
 
     print("Test passed!")

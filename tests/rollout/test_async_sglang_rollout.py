@@ -1,4 +1,4 @@
-# Copyright 2023-2024 SGLang Team
+# Copyright 2023-2024 SGLang Team & ModelBest Inc.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -167,7 +167,6 @@ def test_sglang_rollout():
         "The founder of Apple is",
         "What's your name?",
     ]
-    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
     prompts = tokenizer(preencode_prompts, return_tensors="pt", padding=True)
     input_ids = prompts["input_ids"]
     attention_mask = prompts["attention_mask"]

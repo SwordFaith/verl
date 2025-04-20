@@ -48,7 +48,7 @@ class DataParallelPPOCritic(BasePPOCritic):
         response_length = micro_batch["responses"].size(-1)
         multi_modal_inputs = {}
         if "multi_modal_inputs" in micro_batch:
-            for key in micro_batch["multi_modal_inputs"][0].keys():
+            for key in micro_batch["multi_modal_inputs"][0]:
                 multi_modal_inputs[key] = torch.cat(
                     [inputs[key] for inputs in micro_batch["multi_modal_inputs"]], dim=0
                 )
@@ -139,7 +139,7 @@ class DataParallelPPOCritic(BasePPOCritic):
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids"]
         batch = data.select(batch_keys=select_keys).batch
         use_dynamic_bsz = data.meta_info["use_dynamic_bsz"]
-        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
+        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch
 
         if has_multi_modal_inputs:
             num_micro_batches = data.batch.batch_size[0] // micro_batch_size
@@ -176,12 +176,15 @@ class DataParallelPPOCritic(BasePPOCritic):
 
     def update_critic(self, data: DataProto):
         # make sure we are in training mode
+        multi_turn = data.meta_info.get("multi_turn", False)
         self.critic_module.train()
         metrics = {}
 
         select_keys = ["input_ids", "responses", "attention_mask", "position_ids", "values", "returns"]
+        if multi_turn:
+            select_keys.append("loss_mask")
         batch = data.select(batch_keys=select_keys).batch
-        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
+        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
@@ -216,15 +219,16 @@ class DataParallelPPOCritic(BasePPOCritic):
                         data = {**data.batch.to(torch.cuda.current_device()), **data.non_tensor_batch}
                     else:
                         data = data.to(torch.cuda.current_device())  # critic device is cpu when using offload
-                    input_ids = data["input_ids"]
                     responses = data["responses"]
                     attention_mask = data["attention_mask"]
-                    position_ids = data["position_ids"]
                     values = data["values"]
                     returns = data["returns"]
                     response_length = responses.size(1)
 
-                    response_mask = attention_mask[:, -response_length - 1 : -1]
+                    if multi_turn:
+                        response_mask = data["loss_mask"][:, -response_length - 1 : -1]
+                    else:
+                        response_mask = attention_mask[:, -response_length - 1 : -1]
 
                     vpreds = self._forward_micro_batch(data)
 

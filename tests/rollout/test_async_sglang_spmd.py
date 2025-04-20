@@ -1,4 +1,4 @@
-# Copyright 2023-2024 SGLang Team
+# Copyright 2023-2024 SGLang Team & ModelBest Inc.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -221,7 +221,6 @@ def test_sglang_spmd():
 
 def _pre_process_inputs(pad_token_id, prompt_token_ids: torch.Tensor):
     # remove the left padding in the prompt token_id
-    # pad_token_id = self.llm_engine.tokenizer.pad_token_id if self.llm_engine.tokenizer.pad_token_id is not None else self.llm_engine.tokenizer.eos_token_id
     non_pad_index = torch.nonzero(prompt_token_ids != pad_token_id, as_tuple=False)[0][0]
     token_ids = prompt_token_ids[non_pad_index:].tolist()
     return token_ids

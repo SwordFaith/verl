@@ -215,7 +215,7 @@ class DataParallelPPOActor(BasePPOActor):
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids"]
         batch = data.select(batch_keys=select_keys).batch
-        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
+        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch
 
         if has_multi_modal_inputs:
             num_micro_batches = data.batch.batch_size[0] // micro_batch_size
@@ -234,7 +234,6 @@ class DataParallelPPOActor(BasePPOActor):
             if isinstance(micro_batch, DataProto):
                 micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
 
-            response_mask = micro_batch["attention_mask"][:, -micro_batch["responses"].size(-1) :]
             with torch.no_grad():
                 entropy, log_probs = self._forward_micro_batch(
                     micro_batch, temperature=temperature, calculate_entropy=calculate_entropy
@@ -260,12 +259,15 @@ class DataParallelPPOActor(BasePPOActor):
         self.actor_module.train()
 
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid slient error
+        multi_turn = data.meta_info.get("multi_turn", False)
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
+        if multi_turn:
+            select_keys.append("loss_mask")
         if self.config.use_kl_loss:
             select_keys.append("ref_log_prob")
         batch = data.select(batch_keys=select_keys).batch
-        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
+        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
@@ -308,7 +310,10 @@ class DataParallelPPOActor(BasePPOActor):
                     responses = data["responses"]
                     response_length = responses.size(1)
                     attention_mask = data["attention_mask"]
-                    response_mask = attention_mask[:, -response_length:]
+                    if multi_turn:
+                        response_mask = data["loss_mask"][:, -response_length:]
+                    else:
+                        response_mask = attention_mask[:, -response_length:]
                     old_log_prob = data["old_log_probs"]
                     advantages = data["advantages"]
 

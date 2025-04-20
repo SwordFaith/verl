@@ -1,4 +1,4 @@
-# Copyright 2023-2024 SGLang Team
+# Copyright 2023-2024 SGLang Team & ModelBest Inc.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -115,10 +115,7 @@ class FSDPAsyncSGLangShardingManager(BaseShardingManager):
         for tensor_index, (name, tensor) in enumerate(named_tensors):
             serialized_tensor = MultiprocessingSerializer.serialize(_preprocess_tensor_for_update_weights(tensor))
 
-            if self._tp_rank == 0:
-                gathered_serialized_tensors = [None for _ in range(self._tp_size)]
-            else:
-                gathered_serialized_tensors = None
+            gathered_serialized_tensors = [None for _ in range(self._tp_size)] if self._tp_rank == 0 else None
             dist.gather_object(
                 obj=serialized_tensor,
                 object_gather_list=gathered_serialized_tensors,

@@ -28,6 +28,7 @@ from typing import Dict, Type
 
 import numpy as np
 import ray
+import torch
 from codetiming import Timer
 from omegaconf import OmegaConf, open_dict
 from torch.utils.data import Dataset, RandomSampler, SequentialSampler
@@ -51,6 +52,7 @@ from verl.trainer.ppo.metric_utils import (
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
 from verl.utils.dataset.rl_dataset import RLHFDataset, collate_fn
 from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
+from verl.utils.torch_functional import masked_mean
 from verl.utils.tracking import ValidationGenerationsLogger
 
 WorkerType = Type[Worker]
@@ -98,7 +100,8 @@ class ResourcePoolManager:
         for resource_pool_name, process_on_nodes in self.resource_pool_spec.items():
             # max_colocate_count means the number of WorkerGroups (i.e. processes) in each RayResourcePool
             # For FSDP backend, we recommend using max_colocate_count=1 that merge all WorkerGroups into one.
-            # For Megatron backend, we recommend using max_colocate_count>1 that can utilize different WorkerGroup for differnt models
+            # For Megatron backend, we recommend using max_colocate_count>1 that can utilize different WorkerGroup
+            # for differnt models
             resource_pool = RayResourcePool(
                 process_on_nodes=process_on_nodes, use_gpu=True, max_colocate_count=1, name_prefix=resource_pool_name
             )
@@ -140,13 +143,9 @@ class ResourcePoolManager:
                         break
             if num_nodes > 0:
                 raise ValueError(
-                    f"Resource pool {resource_pool_name}: {num_gpus}*{num_nodes} cannot be satisfied in this ray cluster"
+                    f"Resource pool {resource_pool_name}: {num_gpus}*{num_nodes} "
+                    "cannot be satisfied in this ray cluster"
                 )
-
-
-import torch
-
-from verl.utils.torch_functional import masked_mean
 
 
 def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, kl_penalty="kl", multi_turn=False):
@@ -190,18 +189,23 @@ def compute_response_mask(data: DataProto):
     return attention_mask[:, -response_length:]
 
 
-def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1):
+def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, multi_turn=False):
     # Back-compatible with trainers that do not compute response mask in fit
-    if "response_mask" not in data.batch.keys():
-        data.batch["response_mask"] = compute_response_mask(data)
+    if multi_turn:
+        response_length = data.batch["responses"].size(1)
+        response_mask = data.batch["loss_mask"][:, -response_length:]
+    else:
+        if "response_mask" not in data.batch:
+            data.batch["response_mask"] = compute_response_mask(data)
+        response_mask = data.batch["response_mask"]
     # prepare response group
     # TODO: add other ways to estimate advantages
     if adv_estimator == AdvantageEstimator.GAE:
         values = data.batch["values"]
         advantages, returns = core_algos.compute_gae_advantage_return(
             token_level_rewards=data.batch["token_level_rewards"],
-            values=data.batch["values"],
-            response_mask=data.batch["response_mask"],
+            values=values,
+            response_mask=response_mask,
             gamma=gamma,
             lam=lam,
         )
@@ -210,7 +214,7 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
     elif adv_estimator == AdvantageEstimator.GRPO:
         advantages, returns = core_algos.compute_grpo_outcome_advantage(
             token_level_rewards=data.batch["token_level_rewards"],
-            response_mask=data.batch["response_mask"],
+            response_mask=response_mask,
             index=data.non_tensor_batch["uid"],
         )
         data.batch["advantages"] = advantages
@@ -218,7 +222,7 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
     elif adv_estimator == AdvantageEstimator.REINFORCE_PLUS_PLUS_BASELINE:
         advantages, returns = core_algos.compute_reinforce_plus_plus_baseline_outcome_advantage(
             token_level_rewards=data.batch["token_level_rewards"],
-            response_mask=data.batch["response_mask"],
+            response_mask=response_mask,
             index=data.non_tensor_batch["uid"],
         )
         data.batch["advantages"] = advantages
@@ -226,7 +230,7 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
     elif adv_estimator == AdvantageEstimator.REINFORCE_PLUS_PLUS:
         advantages, returns = core_algos.compute_reinforce_plus_plus_outcome_advantage(
             token_level_rewards=data.batch["token_level_rewards"],
-            response_mask=data.batch["response_mask"],
+            response_mask=response_mask,
             gamma=gamma,
         )
         data.batch["advantages"] = advantages
@@ -235,7 +239,7 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
         advantages, returns = core_algos.compute_remax_outcome_advantage(
             token_level_rewards=data.batch["token_level_rewards"],
             reward_baselines=data.batch["reward_baselines"],
-            response_mask=data.batch["response_mask"],
+            response_mask=response_mask,
         )
 
         data.batch["advantages"] = advantages
@@ -243,7 +247,7 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
     elif adv_estimator == AdvantageEstimator.RLOO:
         advantages, returns = core_algos.compute_rloo_outcome_advantage(
             token_level_rewards=data.batch["token_level_rewards"],
-            response_mask=data.batch["response_mask"],
+            response_mask=response_mask,
             index=data.non_tensor_batch["uid"],
         )
         data.batch["advantages"] = advantages
@@ -356,7 +360,8 @@ class RayPPOTrainer:
                 if mbs is not None and mbs_per_gpu is not None:
                     raise ValueError(
                         f"[{name}] You have set both '{name}.{param}' AND '{name}.{param_per_gpu}'. "
-                        f"Please remove '{name}.{param}' because only '*_{param_per_gpu}' is supported (the former is deprecated)."
+                        f"Please remove '{name}.{param}' because only '*_{param_per_gpu}' "
+                        f"is supported (the former is deprecated)."
                     )
 
         if not config.actor_rollout_ref.actor.use_dynamic_bsz:
@@ -428,24 +433,27 @@ class RayPPOTrainer:
                 assert config.critic.ppo_micro_batch_size * sp_size >= n_gpus
 
         # Check if use_remove_padding is enabled when using sequence parallelism for fsdp
-        if config.actor_rollout_ref.actor.strategy == "fsdp":
-            if (
-                config.actor_rollout_ref.actor.get("ulysses_sequence_parallel_size", 1) > 1
-                or config.actor_rollout_ref.ref.get("ulysses_sequence_parallel_size", 1) > 1
-            ):
-                assert config.actor_rollout_ref.model.use_remove_padding, (
-                    "When using sequence parallelism for actor/ref policy, you must enable `use_remove_padding`."
-                )
+        if config.actor_rollout_ref.actor.strategy == "fsdp" and (
+            config.actor_rollout_ref.actor.get("ulysses_sequence_parallel_size", 1) > 1
+            or config.actor_rollout_ref.ref.get("ulysses_sequence_parallel_size", 1) > 1
+        ):
+            assert config.actor_rollout_ref.model.use_remove_padding, (
+                "When using sequence parallelism for actor/ref policy, you must enable `use_remove_padding`."
+            )
 
-        if self.use_critic and config.critic.strategy == "fsdp":
-            if config.critic.get("ulysses_sequence_parallel_size", 1) > 1:
-                assert config.critic.model.use_remove_padding, (
-                    "When using sequence parallelism for critic, you must enable `use_remove_padding`."
-                )
+        if (
+            self.use_critic
+            and config.critic.strategy == "fsdp"
+            and (config.critic.get("ulysses_sequence_parallel_size", 1) > 1)
+        ):
+            assert config.critic.model.use_remove_padding, (
+                "When using sequence parallelism for critic, you must enable `use_remove_padding`."
+            )
 
         if config.data.get("val_batch_size", None) is not None:
             print(
-                "WARNING: val_batch_size is deprecated. Validation datasets are sent to inference engines as a whole batch, which will schedule the memory themselves."
+                "WARNING: val_batch_size is deprecated. Validation datasets are sent to inference engines as"
+                "a whole batch, which will schedule the memory themselves."
             )
 
         # check eval config
@@ -480,7 +488,8 @@ class RayPPOTrainer:
         )
 
         assert self.train_dataset.truncation == self.config.data.get("truncation", "error"), (
-            f"dataset truncation {self.train_dataset.truncation} must be the same as config {self.config.data.get('truncation', 'error')}"
+            f"dataset truncation {self.train_dataset.truncation} must be the same as config "
+            f"{self.config.data.get('truncation', 'error')}"
         )
         # use sampler for better ckpt resume
         if self.config.data.shuffle:
@@ -519,7 +528,8 @@ class RayPPOTrainer:
 
         assert len(self.train_dataloader) >= 1
         assert len(self.val_dataloader) == 1, (
-            "Validation dataloader must have a single batch, which inference engines will schedule the memory themselves."
+            "Validation dataloader must have a single batch, "
+            "which inference engines will schedule the memory themselves."
         )
 
         print(f"Size of train dataloader: {len(self.train_dataloader)}")
@@ -590,11 +600,11 @@ class RayPPOTrainer:
             sample_inputs.extend(input_texts)
 
             non_tensor_batch_keys = ["raw_prompt_ids"]
-            if "multi_modal_inputs" in test_batch.non_tensor_batch.keys():
+            if "multi_modal_inputs" in test_batch.non_tensor_batch:
                 non_tensor_batch_keys.extend(["multi_modal_data", "multi_modal_inputs"])
-            if "raw_prompt" in test_batch.non_tensor_batch.keys():
+            if "raw_prompt" in test_batch.non_tensor_batch:
                 non_tensor_batch_keys.append("raw_prompt")
-            if "tools_kwargs" in test_batch.non_tensor_batch.keys():
+            if "tools_kwargs" in test_batch.non_tensor_batch:
                 non_tensor_batch_keys.append("tools_kwargs")
             test_gen_batch = test_batch.pop(
                 batch_keys=["input_ids", "attention_mask", "position_ids"],
@@ -706,7 +716,8 @@ class RayPPOTrainer:
 
         # initialize WorkerGroup
         # NOTE: if you want to use a different resource pool for each role, which can support different parallel size,
-        # you should not use `create_colocated_worker_cls`. Instead, directly pass different resource pool to different worker groups.
+        # you should not use `create_colocated_worker_cls`. Instead, directly pass different resource pool 
+        # to different worker groups.
         # See https://github.com/volcengine/verl/blob/master/examples/ray/tutorial.ipynb for more information.
         all_wg = {}
         self.wg_dicts = []
@@ -1022,7 +1033,7 @@ class RayPPOTrainer:
                                 batch,
                                 kl_ctrl=self.kl_ctrl_in_reward,
                                 kl_penalty=self.config.algorithm.kl_penalty,
-                                multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enbaled,
+                                multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enable,
                             )
 
                             metrics.update(kl_metrics)
@@ -1036,10 +1047,12 @@ class RayPPOTrainer:
                             gamma=self.config.algorithm.gamma,
                             lam=self.config.algorithm.lam,
                             num_repeat=self.config.actor_rollout_ref.rollout.n,
+                            multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enable,
                         )
 
                     # update critic
                     if self.use_critic:
+                        batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
                         with _timer("update_critic", timing_raw):
                             critic_output = self.critic_wg.update_critic(batch)
                         critic_output_metrics = reduce_metrics(critic_output.meta_info["metrics"])
@@ -1048,6 +1061,7 @@ class RayPPOTrainer:
                     # implement critic warmup
                     if self.config.trainer.critic_warmup <= self.global_steps:
                         # update actor
+                        batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
                         with _timer("update_actor", timing_raw):
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
