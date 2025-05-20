@@ -31,7 +31,7 @@ from sglang.srt.entrypoints.engine import Engine
 from sglang.srt.function_call_parser import FunctionCallParser
 from sglang.srt.openai_api.protocol import Tool
 from sglang.srt.sampling.sampling_params import SamplingParams
-from sglang.srt.utils import broadcast_pyobj, get_ip, get_open_port
+from sglang.srt.utils import get_ip, get_open_port
 from tensordict import TensorDict
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.nn.utils.rnn import pad_sequence
@@ -53,6 +53,7 @@ from verl.workers.rollout.schemas import (
     Message,
 )
 from verl.workers.rollout.sglang_rollout.sglang_rollout import _post_process_outputs, _pre_process_inputs
+from verl.workers.rollout.sglang_rollout.utils import broadcast_pyobj
 
 if TYPE_CHECKING:
     from torch import nn
@@ -470,8 +471,8 @@ class AsyncSGLangRollout(BaseRollout):
                             for tool_call in parsed_tool_calls
                         ]
                     )
-                    for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
-                        _req.add_tool_response_message(self.tokenizer, resp, format=self.config.multi_turn.format)
+                    for i, (tool_call, (resp, reward, metrics)) in enumerate(zip(parsed_tool_calls, tool_call_results)):
+                        _req.add_tool_response_message(self.tokenizer, resp, (i == len(parsed_tool_calls) - 1), format=self.config.multi_turn.format)
                         if len(_req.input_ids) >= self.config.max_model_len:
                             break
                     if len(_req.input_ids) >= self.config.max_model_len:
