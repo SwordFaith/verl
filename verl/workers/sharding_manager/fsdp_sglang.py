@@ -66,7 +66,7 @@ class FSDPSGLangShardingManager(BaseShardingManager):
     def __init__(
         self,
         module: FSDP,
-        inference_engine: Union[VerlEngine, Engine],
+        inference_engine: Engine,
         model_config,
         full_params: bool = False,
         device_mesh: DeviceMesh = None,
@@ -142,49 +142,6 @@ class FSDPSGLangShardingManager(BaseShardingManager):
             torch.cuda.set_rng_state(self.torch_random_states)
 
     def update_weights(self, params):
-        self.inference_engine.resume_memory_occupation()
-        self.inference_engine.update_weights_from_tensor([(k, v) for k, v in params.items()], load_format=None)
-
-    def release_memory(self):
-        self.inference_engine.release_memory_occupation()
-
-    def preprocess_data(self, data: DataProto) -> DataProto:
-        """All gather across tp group to make each rank has identical input."""
-        if self.device_mesh["infer_tp"].mesh.size()[0] == 1:
-            return data
-
-        # TODO: Current impl doesn't consider FSDP with torch micro-dp
-        group = self.device_mesh["infer_tp"].get_group()
-
-        all_gather_data_proto(data=data, process_group=group)
-        return data
-
-    def postprocess_data(self, data: DataProto) -> DataProto:
-        # TODO: Current impl doesn't consider FSDP with torch micro-dp
-        global_rank = self.device_mesh.get_rank()
-        tp_rank = self.device_mesh["infer_tp"].get_local_rank()
-        tp_size = self.device_mesh["infer_tp"].mesh.size()[0]
-        src_rank = global_rank // tp_size * tp_size
-        broadcast_dict_tensor(data.batch, src=src_rank, group=self.device_mesh["infer_tp"].get_group())
-        if tp_size > 1:
-            local_prompts = data.chunk(chunks=tp_size)
-            data = local_prompts[tp_rank]
-        return data
-
-
-class FSDPAsyncSGLangShardingManager(FSDPSGLangShardingManager):
-    def __init__(
-        self,
-        module: FSDP,
-        inference_engine: Engine,
-        model_config,
-        full_params: bool = False,
-        device_mesh: DeviceMesh = None,
-        offload_param: bool = False,
-    ):
-        super().__init__(module, inference_engine, model_config, full_params, device_mesh, offload_param)
-
-    def update_weights(self, params):
         if self.device_mesh["infer_tp"].get_local_rank() == 0:
             self.inference_engine.resume_memory_occupation()
 
@@ -220,3 +177,26 @@ class FSDPAsyncSGLangShardingManager(FSDPSGLangShardingManager):
     def release_memory(self):
         if self.device_mesh["infer_tp"].get_local_rank() == 0:
             self.inference_engine.release_memory_occupation()
+
+    def preprocess_data(self, data: DataProto) -> DataProto:
+        """All gather across tp group to make each rank has identical input."""
+        if self.device_mesh["infer_tp"].mesh.size()[0] == 1:
+            return data
+
+        # TODO: Current impl doesn't consider FSDP with torch micro-dp
+        group = self.device_mesh["infer_tp"].get_group()
+
+        all_gather_data_proto(data=data, process_group=group)
+        return data
+
+    def postprocess_data(self, data: DataProto) -> DataProto:
+        # TODO: Current impl doesn't consider FSDP with torch micro-dp
+        global_rank = self.device_mesh.get_rank()
+        tp_rank = self.device_mesh["infer_tp"].get_local_rank()
+        tp_size = self.device_mesh["infer_tp"].mesh.size()[0]
+        src_rank = global_rank // tp_size * tp_size
+        broadcast_dict_tensor(data.batch, src=src_rank, group=self.device_mesh["infer_tp"].get_group())
+        if tp_size > 1:
+            local_prompts = data.chunk(chunks=tp_size)
+            data = local_prompts[tp_rank]
+        return data

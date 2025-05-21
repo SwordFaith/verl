@@ -20,7 +20,7 @@ TEST_FREQ=${TEST_FREQ:--1}
 # Save & Resume
 RESUME_MODE=${RESUME_MODE:-disable}
 SAVE_FREQ=${SAVE_FREQ:--1}
-TOT_TRAIN_STEPS=${TOT_TRAIN_STEPS:-1}
+TOT_TRAIN_STEPS=${TOT_TRAIN_STEPS:-2}
 
 train_traj_micro_bsz_per_gpu=2 # b
 n_resp_per_prompt=4 # g
