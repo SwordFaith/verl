@@ -79,7 +79,7 @@ actor_rollout_ref:
       use_distributed_optimizer: True
       use_dist_checkpointing: False
       dist_checkpointing_path: null
-      seed: 1
+      seed: 42
     profile: # profile the actor model in `update_policy` 
       use_profile: False # open it when you want to profile the actor model
       profile_ranks: null # list, you can specify the ranks to profile
@@ -102,7 +102,7 @@ actor_rollout_ref:
       use_distributed_optimizer: False
       use_dist_checkpointing: False
       dist_checkpointing_path: null
-      seed: 1
+      seed: ${actor_rollout_ref.actor.megatron.seed}
     profile:
       use_profile: False
       profile_ranks: null
@@ -141,7 +141,7 @@ actor_rollout_ref:
       qkv_layer_name: qkv
       gate_proj_layer_name: gate_up
     # number of responses (i.e. num sample times)
-    n: 1 # > 1 for grpo
+    n: 1
     engine_kwargs: # inference engine parameters
       swap_space: null # null means "use the engine default value" (usually 4 GB), setting it to, e.g., 32 means 32 GB
     val_kwargs:
@@ -151,7 +151,7 @@ actor_rollout_ref:
       temperature: 0
       n: 1
       do_sample: False # default eager for validation
-    multi_turn:
+    multi_turn: 
       enable: False  # should set rollout.name to sglang_async if True
       max_turns: null  # null for no limit (default max_length // 3)
       tool_config_path: null  # null for no tool
@@ -194,7 +194,7 @@ critic:
     use_distributed_optimizer: True
     use_dist_checkpointing: False
     dist_checkpointing_path: null
-    seed: 1
+    seed: ${actor_rollout_ref.actor.megatron.seed}
   load_weight: True
   ppo_mini_batch_size: ${actor_rollout_ref.actor.ppo_mini_batch_size}
   ppo_micro_batch_size: null # will be deprecated, use ppo_micro_batch_size_per_gpu
@@ -225,7 +225,7 @@ reward_model:
     use_distributed_optimizer: False
     use_dist_checkpointing: False
     dist_checkpointing_path: null
-    seed: 1
+    seed: ${actor_rollout_ref.actor.megatron.seed}
   model:
     input_tokenizer: ${actor_rollout_ref.model.path}  # set this to null if the chat template is identical
     path: ~/models/FsfairX-LLaMA3-RM-v0.1
