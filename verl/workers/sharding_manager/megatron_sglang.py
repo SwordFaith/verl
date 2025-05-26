@@ -1,4 +1,6 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2023-2024 SGLang Team
+# Copyright 2025 ModelBest Inc. and/or its affiliates
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,15 +21,10 @@ import logging
 import os
 
 import torch
-import torch.distributed as dist
 from sglang.srt.entrypoints.engine import Engine
 from sglang.srt.entrypoints.verl_engine import VerlEngine
-from sglang.srt.model_executor.model_runner import LocalSerializedTensor
-from sglang.srt.utils import MultiprocessingSerializer
 from torch import nn
-from torch.distributed import new_group
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import DTensor
 
 from verl.protocol import DataProto, all_gather_data_proto
 from verl.utils.debug import GPUMemoryLogger, log_gpu_memory_usage
@@ -37,12 +34,6 @@ from .base import BaseShardingManager
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_PPO_LOGGING_LEVEL", "WARN"))
-
-
-def _preprocess_tensor_for_update_weights(tensor: torch.Tensor):
-    if isinstance(tensor, DTensor):
-        return tensor.full_tensor()
-    return tensor
 
 
 """
@@ -55,49 +46,40 @@ Megatron Hybrid Engine:
 """
 
 
-_MICRO_DATA_PARALLEL_GROUP = None
-
-
 class MegatronSGLangShardingManager(BaseShardingManager):
     def __init__(
         self,
         actor_module: nn.ModuleList,
         inference_engine: VerlEngine,
         model_config,
+        transformer_config,
         layer_name_mapping,
         weight_converter,
         device_mesh: DeviceMesh | None = None,
     ):
-        from megatron.core import parallel_state as mpu
-
         self.actor_module = actor_module
         self.inference_engine = inference_engine
         self.model_config = model_config
+        self.transformer_config = transformer_config
         self.layer_name_mapping = layer_name_mapping
         self.weight_converter = weight_converter
         self.device_mesh = device_mesh
-        global _MICRO_DATA_PARALLEL_GROUP
-        world_size = dist.get_world_size()
-        rank = dist.get_rank()
 
         if self.device_mesh is not None:
             self.infer_tp_size = self.device_mesh["tp"].mesh.size()[0]
         else:
             self.infer_tp_size = self.inference_engine._tp_size
-        self.train_tp_size = mpu.get_tensor_model_parallel_world_size()
-        self.need_tp_reshard = self.infer_tp_size == self.train_tp_size
 
-        assert self.infer_tp_size <= self.train_tp_size, "Not implemented for infer_tp > train_tp"
-        assert self.train_tp_size % self.infer_tp_size == 0
-
-        micro_dp_size = self.train_tp_size // self.infer_tp_size
-        num_micro_dp_groups = world_size // micro_dp_size
-        assert _MICRO_DATA_PARALLEL_GROUP is None, "micro data parallel group is already initialized"
-        for i in range(num_micro_dp_groups):
-            ranks = range(i * micro_dp_size, (i + 1) * micro_dp_size)
-            group = new_group(ranks=ranks)
-            if rank in ranks:
-                _MICRO_DATA_PARALLEL_GROUP = group
+        # Note that torch_random_states may be different on each dp rank
+        self.torch_random_states = torch.cuda.get_rng_state()
+        # get a random rng states
+        if self.device_mesh is not None:
+            gen_dp_rank = self.device_mesh["dp"].get_local_rank()
+            torch.cuda.manual_seed(gen_dp_rank + 1000)  # make sure all tp ranks have the same random states
+            self.gen_random_states = torch.cuda.get_rng_state()
+            torch.cuda.set_rng_state(self.torch_random_states)
+        else:
+            self.gen_random_states = None
 
         # Note that torch_random_states may be different on each dp rank
         self.torch_random_states = torch.cuda.get_rng_state()
@@ -112,7 +94,13 @@ class MegatronSGLangShardingManager(BaseShardingManager):
 
     @GPUMemoryLogger(role="MegatronSGLangShardingManager enter", logger=logger)
     def __enter__(self):
-        per_tensor_param = per_tensor_generator(self.actor_module, self.model_config, self.weight_converter, self.layer_name_mapping)
+        per_tensor_param = per_tensor_generator(
+            self.actor_module,
+            self.model_config,
+            self.weight_converter,
+            self.transformer_config,
+            self.layer_name_mapping,
+        )
         self.update_weights(per_tensor_param)
 
         # important: need to manually set the random states of each tp to be identical.
@@ -160,8 +148,25 @@ class MegatronSGLangShardingManager(BaseShardingManager):
 
 
 class MegatronAsyncSGLangShardingManager(MegatronSGLangShardingManager):
-    def __init__(self, actor_module: nn.ModuleList, inference_engine: Engine, model_config, layer_name_mapping, weight_converter, device_mesh: DeviceMesh = None):
-        super().__init__(actor_module, inference_engine, model_config, layer_name_mapping, weight_converter, device_mesh)
+    def __init__(
+        self,
+        actor_module: nn.ModuleList,
+        inference_engine: Engine,
+        model_config,
+        transformer_config,
+        layer_name_mapping,
+        weight_converter,
+        device_mesh: DeviceMesh = None,
+    ):
+        super().__init__(
+            actor_module,
+            inference_engine,
+            model_config,
+            transformer_config,
+            layer_name_mapping,
+            weight_converter,
+            device_mesh,
+        )
 
     def update_weights(self, params):
         if self.device_mesh["tp"].get_local_rank() == 0:
@@ -172,25 +177,12 @@ class MegatronAsyncSGLangShardingManager(MegatronSGLangShardingManager):
         named_tensors = params
         load_format = None
         for tensor_index, (name, tensor) in enumerate(named_tensors):
-            serialized_tensor = MultiprocessingSerializer.serialize(_preprocess_tensor_for_update_weights(tensor))
-
-            if self.device_mesh["tp"].get_local_rank() == 0:
-                gathered_serialized_tensors = [None for _ in range(self.device_mesh["tp"].mesh.size()[0])]
-            else:
-                gathered_serialized_tensors = None
-            dist.gather_object(
-                obj=serialized_tensor,
-                object_gather_list=gathered_serialized_tensors,
-                dst=self.device_mesh["tp"].mesh.tolist()[0],
-                group=self.device_mesh["tp"].get_group(),
-            )
-
             if self.device_mesh["tp"].get_local_rank() == 0:
                 self.inference_engine.update_weights_from_tensor(
                     named_tensors=[
                         (
                             name,
-                            LocalSerializedTensor(values=gathered_serialized_tensors),
+                            tensor.detach(),
                         )
                     ],
                     load_format=load_format,
