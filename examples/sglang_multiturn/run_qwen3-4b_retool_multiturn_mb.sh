@@ -14,6 +14,7 @@ export HYDRA_FULL_ERROR=1
 export PIP_INDEX_URL=https://swnexus.thuwayinfo.com/repository/group-pypi/simple
 export http_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
 export https_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
+export no_proxy=127.0.0.1,localhost,code-sandbox.ali-dev.modelbest.co,swnexus.thuwayinfo.com
 
 ulimit -n 65535
 
@@ -24,7 +25,7 @@ python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_PATH" \
     --config-name='retool_multiturn_grpo' \
     algorithm.adv_estimator=grpo \
-    data.train_batch_size=128 \
+    data.train_batch_size=16 \
     data.max_prompt_length=2048 \
     data.max_response_length=16384 \
     data.filter_overlong_prompts=False \
