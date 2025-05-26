@@ -144,7 +144,7 @@ class SandboxFusionTool(BaseTool):
             "ground_truth": ground_truth,
             "reward": [],
         }
-        print(f"self._instance_dict: {self._instance_dict}, prime_tools create are called")
+        # print(f"self._instance_dict: {self._instance_dict}, prime_tools create are called")
         return instance_id
 
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, dict]:
