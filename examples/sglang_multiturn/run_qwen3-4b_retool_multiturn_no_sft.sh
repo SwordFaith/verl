@@ -5,16 +5,8 @@ set -x
 
 export PYTHONUNBUFFERED=1
 export RAY_DEDUP_LOGS=0
-export HF_HUB_OFFLINE=1
-export HF_ENDPOINT=https://hf-mirror.com
-export WANDB_MODE=offline
-export WANDB_DIR=/data/tensorboard/
 export RUST_BACKTRACE=1
 export HYDRA_FULL_ERROR=1
-export PIP_INDEX_URL=https://swnexus.thuwayinfo.com/repository/group-pypi/simple
-export http_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
-export https_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
-export no_proxy=127.0.0.1,localhost,code-sandbox.ali-dev.modelbest.co,swnexus.thuwayinfo.com
 
 ulimit -n 65535
 
@@ -31,9 +23,9 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=False \
     data.truncation='error' \
     data.return_raw_chat=True \
-    data.train_files=/user/longxiang1/data/retool_dapo/train.parquet \
-    data.val_files=/user/longxiang1/data/retool_aime2024/train.parquet \
-    actor_rollout_ref.model.path=/user/longxiang1/models/Qwen/Qwen3-4B \
+    data.train_files=$HOME/data/retool_dapo/train.parquet \
+    data.val_files=$HOME/data/retool_aime2024/train.parquet \
+    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.use_liger=False \

@@ -25,7 +25,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=/user/longxiang1/models/Qwen/Qwen2.5-3B-Instruct \
+    actor_rollout_ref.model.path=Qwen/Qwen2.5-3B-Instruct \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=256 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=16 \
@@ -58,8 +58,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=20 \
-    data.train_files=/user/longxiang1/data/gsm8k_verl_sgl_multi_turn_preprocessed_v2/train.parquet \
-    data.val_files=/user/longxiang1/data/gsm8k_verl_sgl_multi_turn_preprocessed_v2/test.parquet \
+    data.train_files=$HOME/data/gsm8k_verl_sgl_multi_turn_preprocessed_v2/train.parquet \
+    data.val_files=$HOME/data/gsm8k_verl_sgl_multi_turn_preprocessed_v2/test.parquet \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/examples/sglang_multiturn/config/tool_config/gsm8k_tool_config.yaml" \
     trainer.total_epochs=15 $@
 
