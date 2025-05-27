@@ -14,6 +14,9 @@ data:
 
 actor_rollout_ref:
   hybrid_engine: True
+  actor:
+    fsdp_config:
+      model_dtype: bfloat16
   rollout:
     name: sglang_async
     multi_turn:
@@ -21,3 +24,6 @@ actor_rollout_ref:
       max_turns: 5
       format: qwen
       # tool_config_path: "./config/tool_config/gsm8k_tool_config.yaml"
+  ref:
+    fsdp_config:
+      model_dtype: bfloat16
