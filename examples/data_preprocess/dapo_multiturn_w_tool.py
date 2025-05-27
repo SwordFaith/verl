@@ -26,14 +26,6 @@ import datasets
 from verl.utils.hdfs_io import copy, makedirs
 
 
-def extract_solution(solution_str):
-    solution = re.search("#### (\\-?[0-9\\.\\,]+)", solution_str)
-    assert solution is not None
-    final_solution = solution.group(0)
-    final_solution = final_solution.split("#### ")[1].replace(",", "")
-    return final_solution
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--local_dir", default="~/data/retool_dapo")
@@ -41,7 +33,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    data_path = "/user/longxiang1/data/BytedTsinghua-SIA/DAPO-Math-17k"
+    data_path = "BytedTsinghua-SIA/DAPO-Math-17k"
     dataset = datasets.load_dataset(data_path, "default")
 
     train_dataset = dataset["train"]
