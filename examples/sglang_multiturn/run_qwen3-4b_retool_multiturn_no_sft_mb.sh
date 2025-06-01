@@ -27,7 +27,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=128 \
     data.max_prompt_length=$((1024 * 2)) \
-    data.max_response_length=$((1024 * 16)) \
+    data.max_response_length=$((1024 * 30)) \
     data.filter_overlong_prompts=False \
     data.truncation='error' \
     data.return_raw_chat=True \
