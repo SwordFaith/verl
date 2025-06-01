@@ -35,6 +35,7 @@ if [ $RANK -eq 0 ]; then
     --num-gpus=8 \
     --num-cpus=80 \
     --include-dashboard=false 
+    sleep 10
     # 等待head节点就绪
     echo "Head is ready"
 else
