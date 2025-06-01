@@ -36,7 +36,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.path=/user/longxiang1/models/Qwen/Qwen3-4B \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.model.use_liger=False \
+    actor_rollout_ref.model.use_liger=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     +actor_rollout_ref.model.enable_activation_offloading=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
