@@ -2,13 +2,13 @@ tools:
   - class_name: "verl.tools.sandbox_fusion_tool.SandboxFusionTool"
     config:
       sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co/run_code
-      num_workers: 10
-      rate_limit: 10
+      num_workers: 20
+      rate_limit: 20
     tool_schema:
       type: "function"
       function:
         name: "code_interpreter"
-        description: "A tool for executing code."
+        description: "A tool for executing code. You need get result by print to stdout."
         parameters:
           type: "object"
           properties:
