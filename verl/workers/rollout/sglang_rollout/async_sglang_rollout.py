@@ -615,6 +615,8 @@ class AsyncSGLangRollout(BaseRollout):
             src=self._device_mesh_cpu["tp"].mesh[0].item(),
             force_cpu_device=False,
         )
+        print(f"{sorted_output_req_list[0].messages=}")
+        print(f"{self.tokenizer.decode(sorted_output_req_list[0].input_ids)=}")
         # Construct the batch data
         prompt_ids, response_ids = [], []
         prompt_attention_mask, response_attention_mask = [], []
