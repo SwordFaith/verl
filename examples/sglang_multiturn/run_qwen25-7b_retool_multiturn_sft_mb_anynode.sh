@@ -28,24 +28,29 @@ RAY_PORT=$(($MASTER_PORT + 1))
 export RAY_ADDRESS="${MASTER_IP}:${RAY_PORT}"
 
 ulimit -n 65535
-if [ $RANK -eq 0 ]; then
-    # 启动head节点
-    ray start --head \
-    --port=$RAY_PORT \
-    --num-gpus=8 \
-    --num-cpus=80 \
-    --include-dashboard=false 
-    sleep 10
-    # 等待head节点就绪
-    echo "Head is ready"
-else
-    # worker节点等待head节点就绪
-    # 启动worker节点
-    ray start --address="${RAY_ADDRESS}" \
-    --num-gpus=8 \
-    --num-cpus=80 \
-    --block
-    echo "Worker ${RANK} is connected"
+
+ray stop --force
+
+if [ $(($WORLD_SIZE + 0)) -gt 1 ]; then
+    if [ $RANK -eq 0 ]; then
+        # 启动head节点
+        ray start --head \
+        --port=$RAY_PORT \
+        --num-gpus=8 \
+        --num-cpus=80 \
+        --include-dashboard=false 
+        sleep 10
+        # 等待head节点就绪
+        echo "Head is ready"
+    else
+        # worker节点等待head节点就绪
+        # 启动worker节点
+        ray start --address="${RAY_ADDRESS}" \
+        --num-gpus=8 \
+        --num-cpus=80 \
+        --block
+        echo "Worker ${RANK} is connected"
+    fi
 fi
 
 # Train over 4 nodes, 8 H100-80GB GPUs per node.
@@ -77,10 +82,10 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.actor.entropy_coeff=0 \
         actor_rollout_ref.actor.fsdp_config.param_offload=True \
         actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-        actor_rollout_ref.actor.ulysses_sequence_parallel_size=8 \
-        actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
+        actor_rollout_ref.actor.ulysses_sequence_parallel_size=2 \
+        actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
         actor_rollout_ref.rollout.name=sglang_async \
-        actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+        actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
         actor_rollout_ref.rollout.n=8 \
         actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/examples/sglang_multiturn/config/tool_config/sandbox_fusion_retool_config_mb.yaml" \
         actor_rollout_ref.ref.fsdp_config.param_offload=True \
