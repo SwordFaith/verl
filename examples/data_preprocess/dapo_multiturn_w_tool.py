@@ -52,7 +52,7 @@ if __name__ == "__main__":
     def make_map_fn(split):
         def process_fn(example, idx):
             prompt = example["prompt"]
-            prompt_content = prompt["content"]
+            prompt_content = prompt[0]["content"]
             problem = prompt_content.split(PROMBLEM_PREFIX)[1]
             system_prompt = "You are a helpful assistant that can solve math problems with interaction Code Interpreter by Python code."
             user_prompt_template = (

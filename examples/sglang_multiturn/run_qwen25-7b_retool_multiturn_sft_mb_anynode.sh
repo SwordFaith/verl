@@ -21,17 +21,16 @@ ulimit -n 65535
 PROJECT_DIR="$(pwd)"
 CONFIG_PATH="$PROJECT_DIR/examples/sglang_multiturn/config"
 
-# Start ray cluster
-MASTER_IP=$(getent hosts $MASTER_ADDR | awk '{print $1}')
-RAY_PORT=$(($MASTER_PORT + 1))
-
-export RAY_ADDRESS="${MASTER_IP}:${RAY_PORT}"
-
 ulimit -n 65535
 
 ray stop --force
 
-if [ $(($WORLD_SIZE + 0)) -gt 1 ]; then
+if [ $WORLD_SIZE -gt 1 ]; then
+    # Start ray cluster
+    MASTER_IP=$(getent hosts $MASTER_ADDR | awk '{print $1}')
+    RAY_PORT=$(($MASTER_PORT + 1))
+
+    export RAY_ADDRESS="${MASTER_IP}:${RAY_PORT}"
     if [ $RANK -eq 0 ]; then
         # 启动head节点
         ray start --head \
@@ -65,9 +64,9 @@ if [ $RANK -eq 0 ]; then
         data.filter_overlong_prompts=False \
         data.truncation='error' \
         data.return_raw_chat=True \
-        data.train_files=/user/longxiang1/data/retool_dapo/train.parquet \
-        data.val_files=/user/longxiang1/data/retool_aime2024/train.parquet \
-        actor_rollout_ref.model.path=/user/longxiang1/checkpoints/retool-multiturn-sft/retool-multiturn-sft-qwen2.5-7b-sp4-mb/global_step_84 \
+        data.train_files=/user/longxiang1/data/retool_prompt_dapo/train.parquet \
+        data.val_files=/user/longxiang1/data/retool_prompt_aime2024/train.parquet \
+        actor_rollout_ref.model.path=/user/longxiang1/checkpoints/retool-multiturn-sft/retool-multiturn-sft-qwen2.5-7b-sp4-mb/global_step_28 \
         actor_rollout_ref.actor.use_dynamic_bsz=True \
         actor_rollout_ref.model.use_remove_padding=True \
         actor_rollout_ref.model.use_liger=True \
@@ -85,7 +84,7 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.actor.ulysses_sequence_parallel_size=2 \
         actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
         actor_rollout_ref.rollout.name=sglang_async \
-        actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
+        actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
         actor_rollout_ref.rollout.n=8 \
         actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/examples/sglang_multiturn/config/tool_config/sandbox_fusion_retool_config_mb.yaml" \
         actor_rollout_ref.ref.fsdp_config.param_offload=True \
@@ -93,7 +92,7 @@ if [ $RANK -eq 0 ]; then
         trainer.critic_warmup=0 \
         trainer.logger=['console','wandb'] \
         trainer.project_name='retool_async_rl' \
-        trainer.experiment_name='qwen2.5-7b_function_rm-retool-async-sgl-sft-n8-v2506032000-${WORLD_SIZE}xnode' \
+        trainer.experiment_name='qwen2.5-7b_function_rm-retool-async-sgl-sft-n8-v2506032000-$WORLD_SIZExnode' \
         trainer.val_before_train=True \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=${WORLD_SIZE} \
