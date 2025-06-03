@@ -8,7 +8,7 @@ tools:
       type: "function"
       function:
         name: "code_interpreter"
-        description: "A tool for executing code. You need get result by print to stdout."
+        description: "A tool for executing code."
         parameters:
           type: "object"
           properties:
