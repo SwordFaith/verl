@@ -92,7 +92,7 @@ if [ $RANK -eq 0 ]; then
         trainer.critic_warmup=0 \
         trainer.logger=['console','wandb'] \
         trainer.project_name='retool_async_rl' \
-        trainer.experiment_name='qwen2.5-7b_function_rm-retool-async-sgl-sft-n8-v2506032000-$WORLD_SIZExnode' \
+        trainer.experiment_name="qwen2.5-7b_function_rm-retool-async-sgl-sft-n8-v2506032000-${WORLD_SIZE}xnode" \
         trainer.val_before_train=True \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=${WORLD_SIZE} \
