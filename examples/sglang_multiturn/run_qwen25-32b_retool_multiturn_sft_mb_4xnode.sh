@@ -81,7 +81,7 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.actor.ulysses_sequence_parallel_size=8 \
         actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
         actor_rollout_ref.rollout.name=sglang_async \
-        actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
+        actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
         actor_rollout_ref.rollout.n=8 \
         actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/examples/sglang_multiturn/config/tool_config/sandbox_fusion_tool_config_mb.yaml" \
         actor_rollout_ref.ref.fsdp_config.param_offload=True \
