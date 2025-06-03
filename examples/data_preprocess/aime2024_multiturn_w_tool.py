@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Preprocess the DAPO-Math-17k dataset to multiturn format
+Preprocess the AIME-2024 dataset to multiturn format
 """
 
 import argparse
@@ -24,6 +24,9 @@ import re
 import datasets
 
 from verl.utils.hdfs_io import copy, makedirs
+
+
+PROMBLEM_PREFIX = "Solve the following math problem step by step. The last line of your response should be of the form Answer: $Answer (without quotes) where $Answer is the answer to the problem.\n\n"
 
 
 def extract_solution(solution_str):
@@ -49,6 +52,27 @@ if __name__ == "__main__":
     # add a row to each data item that represents a unique id
     def make_map_fn(split):
         def process_fn(example, idx):
+            prompt = example["prompt"]
+            prompt_content = prompt["content"]
+            problem = prompt_content.split(PROMBLEM_PREFIX)[1]
+            system_prompt = "You are a helpful assistant that can solve math problems with interaction Code Interpreter by Python code."
+            user_prompt_template = (
+                "Solve the following problem step by step. You now have the ability to selectively write executable Python code to enhance your reasoning process.\n\n"
+                "**user question:**\n"
+                "{problem}"
+                "\nLet me compute that step by step using code to ensure accuracy."
+            )
+            user_prompt = user_prompt_template.format(problem=problem)
+            example["prompt"] = [
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt,
+                },
+            ]
             orig_extra_info = example.pop("extra_info")
             extra_info = orig_extra_info.copy()
             extra_info["need_tools_kwargs"] = True

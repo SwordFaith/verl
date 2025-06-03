@@ -1,0 +1,22 @@
+tools:
+  - class_name: "verl.tools.sandbox_fusion_tool.SandboxFusionTool"
+    config:
+      sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co/run_code
+      num_workers: 20
+      rate_limit: 20
+    tool_schema:
+      type: "function"
+      function:
+        name: "code_interpreter"
+        description: "Execute Python code to perform calculations, data analysis, or other computational tasks."
+        parameters:
+          type: "object"
+          properties:
+            code:
+              type: "string"
+              description: "The Python code to be executed. This can include calculations, data manipulation, or any valid Python code."
+            language:
+              type: "string"
+              description: "The programming language of the code. Currently only Python is supported."
+              default: "python"
+          required: ["code"]
