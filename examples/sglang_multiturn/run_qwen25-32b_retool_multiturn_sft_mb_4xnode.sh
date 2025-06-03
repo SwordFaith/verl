@@ -54,7 +54,7 @@ if [ $RANK -eq 0 ]; then
         --config-path="$CONFIG_PATH" \
         --config-name='retool_multiturn_grpo' \
         algorithm.adv_estimator=grpo \
-        data.train_batch_size=512 \
+        data.train_batch_size=128 \
         data.max_prompt_length=2048 \
         data.max_response_length=$((1024 * 16)) \
         data.filter_overlong_prompts=False \
@@ -82,14 +82,14 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
         actor_rollout_ref.rollout.name=sglang_async \
         actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
-        actor_rollout_ref.rollout.n=16 \
+        actor_rollout_ref.rollout.n=8 \
         actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/examples/sglang_multiturn/config/tool_config/sandbox_fusion_tool_config_mb.yaml" \
         actor_rollout_ref.ref.fsdp_config.param_offload=True \
         algorithm.use_kl_in_reward=False \
         trainer.critic_warmup=0 \
         trainer.logger=['console','wandb'] \
         trainer.project_name='retool_async_rl' \
-        trainer.experiment_name='qwen2.5-32b_function_rm-retool-async-sgl-sft-n8-v2506011300-4xnode' \
+        trainer.experiment_name='qwen2.5-32b_function_rm-retool-async-sgl-sft-n8-v2506031100-4xnode' \
         trainer.val_before_train=True \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=4 \
