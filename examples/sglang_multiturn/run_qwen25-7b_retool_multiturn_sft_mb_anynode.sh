@@ -82,6 +82,7 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.actor.fsdp_config.param_offload=True \
         actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
         actor_rollout_ref.actor.ulysses_sequence_parallel_size=2 \
+        +actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
         actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
         actor_rollout_ref.rollout.name=sglang_async \
         actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \

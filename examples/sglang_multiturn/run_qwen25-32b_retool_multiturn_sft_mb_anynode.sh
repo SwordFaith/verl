@@ -21,31 +21,35 @@ ulimit -n 65535
 PROJECT_DIR="$(pwd)"
 CONFIG_PATH="$PROJECT_DIR/examples/sglang_multiturn/config"
 
-# Start ray cluster
-MASTER_IP=$(getent hosts $MASTER_ADDR | awk '{print $1}')
-RAY_PORT=$(($MASTER_PORT + 1))
-
-export RAY_ADDRESS="${MASTER_IP}:${RAY_PORT}"
-
 ulimit -n 65535
-if [ $RANK -eq 0 ]; then
-    # 启动head节点
-    ray start --head \
-    --port=$RAY_PORT \
-    --num-gpus=8 \
-    --num-cpus=80 \
-    --include-dashboard=false 
-    sleep 10
-    # 等待head节点就绪
-    echo "Head is ready"
-else
-    # worker节点等待head节点就绪
-    # 启动worker节点
-    ray start --address="${RAY_ADDRESS}" \
-    --num-gpus=8 \
-    --num-cpus=80 \
-    --block
-    echo "Worker ${RANK} is connected"
+
+ray stop --force
+
+if [ $WORLD_SIZE -gt 1 ]; then
+    # Start ray cluster
+    MASTER_IP=$(getent hosts $MASTER_ADDR | awk '{print $1}')
+    RAY_PORT=$(($MASTER_PORT + 1))
+
+    export RAY_ADDRESS="${MASTER_IP}:${RAY_PORT}"
+    if [ $RANK -eq 0 ]; then
+        # 启动head节点
+        ray start --head \
+        --port=$RAY_PORT \
+        --num-gpus=8 \
+        --num-cpus=80 \
+        --include-dashboard=false 
+        sleep 10
+        # 等待head节点就绪
+        echo "Head is ready"
+    else
+        # worker节点等待head节点就绪
+        # 启动worker节点
+        ray start --address="${RAY_ADDRESS}" \
+        --num-gpus=8 \
+        --num-cpus=80 \
+        --block
+        echo "Worker ${RANK} is connected"
+    fi
 fi
 
 # Train over 4 nodes, 8 H100-80GB GPUs per node.
@@ -60,9 +64,9 @@ if [ $RANK -eq 0 ]; then
         data.filter_overlong_prompts=False \
         data.truncation='error' \
         data.return_raw_chat=True \
-        data.train_files=/user/longxiang1/data/retool_dapo/train.parquet \
-        data.val_files=/user/longxiang1/data/retool_aime2024/train.parquet \
-        actor_rollout_ref.model.path=/user/longxiang1/checkpoints/retool-multiturn-sft/retool-multiturn-sft-qwen2.5-32b-sp8-mb/global_step_84 \
+        data.train_files=/user/longxiang1/data/retool_prompt_dapo/train.parquet \
+        data.val_files=/user/longxiang1/data/retool_prompt_aime2024/train.parquet \
+        actor_rollout_ref.model.path=/user/longxiang1/checkpoints/retool-multiturn-sft/retool-multiturn-sft-qwen2.5-32b-sp8-mb/global_step_28 \
         actor_rollout_ref.actor.use_dynamic_bsz=True \
         actor_rollout_ref.model.use_remove_padding=True \
         actor_rollout_ref.model.use_liger=True \
@@ -78,6 +82,7 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.actor.fsdp_config.param_offload=True \
         actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
         actor_rollout_ref.actor.ulysses_sequence_parallel_size=8 \
+        +actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
         actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
         actor_rollout_ref.rollout.name=sglang_async \
         actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
