@@ -91,7 +91,7 @@ if [ $RANK -eq 0 ]; then
         trainer.experiment_name='qwen2.5-32b_function_rm-retool-async-sgl-sft-n8-v2506031100-4xnode' \
         trainer.val_before_train=True \
         trainer.n_gpus_per_node=8 \
-        trainer.nnodes=4 \
+        trainer.nnodes=${WORLD_SIZE} \
         trainer.save_freq=10 \
         trainer.test_freq=20 \
         trainer.total_training_steps=500 \
