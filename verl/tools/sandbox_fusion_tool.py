@@ -229,7 +229,7 @@ class SandboxFusionTool(BaseTool):
                 ret_str += f'errors: {response_json["cells"][-1]["error"]}\n'
             return ret_str
         except Exception as e:
-            logger.error(f"Error in get_jupyter_mode_result: {e}")
+            logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
             return "no stdout here"
 
 
