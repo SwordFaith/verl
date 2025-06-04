@@ -19,11 +19,15 @@ export no_proxy=127.0.0.1,localhost,code-sandbox.ali-dev.modelbest.co,swnexus.th
 ulimit -n 65535
 
 PROJECT_DIR="$(pwd)"
+RESPONSE_LENGTH=${RESPONSE_LENGTH:-$((1024 * 16))}
 CONFIG_PATH="$PROJECT_DIR/examples/sglang_multiturn/config"
 WANDB_PROJECT=retool_async_rl
-WANDB_EXPERIMENT_BASE=qwen2.5-7b_function_rm-retool-async-sgl-sft-bsz128-n8
+WANDB_EXPERIMENT_BASE=qwen2.5-7b_function_rm-retool-async-sgl-sft-bsz128-n8-${RESPONSE_LENGTH}
 CKPT_PATH=/user/${USER_ID}/checkpoints/${WANDB_PROJECT}/${WANDB_EXPERIMENT_BASE}
 WANDB_EXPERIMENT=${WANDB_EXPERIMENT_BASE}-v$(date +"%y%m%d%H%M")-${WORLD_SIZE}xnode-${JOB_ID}
+ACTOR_SP=${ACTOR_SP:-4}
+ROLLOUT_TP=${ROLLOUT_TP:-2}
+OFFLOAD=True
 
 ulimit -n 65535
 
@@ -64,7 +68,7 @@ if [ $RANK -eq 0 ]; then
         algorithm.adv_estimator=grpo \
         data.train_batch_size=128 \
         data.max_prompt_length=2048 \
-        data.max_response_length=$((1024 * 16)) \
+        data.max_response_length=$RESPONSE_LENGTH \
         data.filter_overlong_prompts=False \
         data.truncation='error' \
         data.return_raw_chat=True \
@@ -83,16 +87,16 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.actor.kl_loss_coef=0.0 \
         actor_rollout_ref.actor.kl_loss_type=low_var_kl \
         actor_rollout_ref.actor.entropy_coeff=0 \
-        actor_rollout_ref.actor.fsdp_config.param_offload=True \
-        actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-        actor_rollout_ref.actor.ulysses_sequence_parallel_size=4 \
+        actor_rollout_ref.actor.fsdp_config.param_offload=${OFFLOAD} \
+        actor_rollout_ref.actor.fsdp_config.optimizer_offload=${OFFLOAD} \
+        actor_rollout_ref.actor.ulysses_sequence_parallel_size=${ACTOR_SP} \
         +actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
-        actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+        actor_rollout_ref.rollout.tensor_model_parallel_size=${ROLLOUT_TP} \
         actor_rollout_ref.rollout.name=sglang_async \
         actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
         actor_rollout_ref.rollout.n=8 \
         actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/examples/sglang_multiturn/config/tool_config/sandbox_fusion_retool_config_mb.yaml" \
-        actor_rollout_ref.ref.fsdp_config.param_offload=True \
+        actor_rollout_ref.ref.fsdp_config.param_offload=${OFFLOAD} \
         algorithm.use_kl_in_reward=False \
         trainer.critic_warmup=0 \
         trainer.logger=['console','wandb'] \
