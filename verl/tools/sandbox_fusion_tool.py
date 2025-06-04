@@ -196,14 +196,14 @@ class SandboxFusionTool(BaseTool):
             return "no stdout here"
     
     def get_jupyter_mode_result(self, instance_id, timeout=300):
-        payload = json.dumps({
+        payload = {
             "cells": self._instance_dict[instance_id]["cells"],
             # "cell_timeout": 0,
             # "total_timeout": timeout,
             "kernel": "python3",
             # "files": {},
             # "fetch_files": [],
-        })
+        }
         # headers = {
         #     'Content-Type': 'application/json',
         #     'Accept': 'application/json'
