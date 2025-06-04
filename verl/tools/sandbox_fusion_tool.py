@@ -211,7 +211,7 @@ class SandboxFusionTool(BaseTool):
         try:
             response = requests.request("POST", self.sandbox_fusion_url, headers=headers, data=payload, timeout=timeout)
         except Exception as e:
-            logger.error(f"Error in get_jupyter_mode_result: {e}")
+            logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}")
             return "no stdout here"
         if response.status_code != 200:
             logger.error(f"Error in get_jupyter_mode_result: {response.status_code}")
