@@ -195,11 +195,11 @@ class SandboxFusionTool(BaseTool):
         else:
             return "no stdout here"
     
-    def get_jupyter_mode_result(self, instance_id):
+    def get_jupyter_mode_result(self, instance_id, timeout=120):
         payload = json.dumps({
             "cells": self._instance_dict[instance_id]["cells"],
             "cell_timeout": 0,
-            "total_timeout": 45,
+            "total_timeout": timeout,
             "kernel": "python3",
             "files": {},
             "fetch_files": [],
@@ -209,7 +209,7 @@ class SandboxFusionTool(BaseTool):
             'Accept': 'application/json'
         }
         try:
-            response = requests.request("POST", self.sandbox_fusion_url, headers=headers, data=payload)
+            response = requests.request("POST", self.sandbox_fusion_url, headers=headers, data=payload, timeout=timeout)
         except Exception as e:
             logger.error(f"Error in get_jupyter_mode_result: {e}")
             return "no stdout here"
