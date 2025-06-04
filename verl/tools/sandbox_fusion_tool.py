@@ -15,6 +15,8 @@
 # limitations under the License.
 
 from enum import Enum
+import json
+import requests
 import logging
 import os
 import threading
@@ -130,6 +132,11 @@ class SandboxFusionTool(BaseTool):
         self.rate_limit = config.get("rate_limit", 10)
         self.execution_pool = init_execution_pool(num_workers=self.num_workers, worker_actor_cls=ExecutionWorker)
         self.sandbox_fusion_url = config.get("sandbox_fusion_url","")
+        self.jupyter_mode = config.get("jupyter_mode", False)
+        if self.jupyter_mode:
+            self.sandbox_fusion_url = self.sandbox_fusion_url.rstrip("/") + "/run_jupyter"
+        else:
+            self.sandbox_fusion_url = self.sandbox_fusion_url.rstrip("/") + "/run_code"
         if self.sandbox_fusion_url == "":
             raise ValueError("sandbox_fusion_url is not set")
 
@@ -143,6 +150,7 @@ class SandboxFusionTool(BaseTool):
             "response": "",
             "ground_truth": ground_truth,
             "reward": [],
+            "cells": [],
         }
         # print(f"self._instance_dict: {self._instance_dict}, prime_tools create are called")
         return instance_id
@@ -151,8 +159,13 @@ class SandboxFusionTool(BaseTool):
         code = parameters.get("code", "")
         if not isinstance(code, str):
             code = str(code)
+        if len(code) > 0 and self.jupyter_mode:
+            self._instance_dict[instance_id]["cells"].append(code)
 
-        result = await self.execution_pool.execute.remote(self.execute_code,instance_id,code)
+        if self.jupyter_mode:
+            result = await self.execution_pool.execute.remote(self.get_jupyter_mode_result, instance_id)
+        else:
+            result = await self.execution_pool.execute.remote(self.execute_code, instance_id, code)
         # penalty for non improved answer submission
         # tool_reward = 0.0 if reward > self._instance_dict[instance_id]["reward"] else -0.05
         # update the reward
@@ -161,7 +174,7 @@ class SandboxFusionTool(BaseTool):
 
         return result, result, {}
 
-    def execute_code(self,instance_id,code):
+    def execute_code(self, instance_id, code):
         '''
             _process_single_case(
             case_index: int,
@@ -180,6 +193,43 @@ class SandboxFusionTool(BaseTool):
             # print(f"actual_output from sandbox fusion: {actual_output},{instance_id}")
             return actual_output
         else:
+            return "no stdout here"
+    
+    def get_jupyter_mode_result(self, instance_id):
+        payload = json.dumps({
+            "cells": self._instance_dict[instance_id]["cells"],
+            "cell_timeout": 0,
+            "total_timeout": 45,
+            "kernel": "python3",
+            "files": {},
+            "fetch_files": [],
+        })
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }
+        try:
+            response = requests.request("POST", self.sandbox_fusion_url, headers=headers, data=payload)
+        except Exception as e:
+            logger.error(f"Error in get_jupyter_mode_result: {e}")
+            return "no stdout here"
+        if response.status_code != 200:
+            logger.error(f"Error in get_jupyter_mode_result: {response.status_code}")
+            return "no stdout here"
+        try:
+            response_json = response.json()
+            ret_str = ""
+            if response_json["cells"][-1]["stdout"] is not None and len(response_json["cells"][-1]["stdout"]) > 0:
+                ret_str += f"stdout: {response_json["cells"][-1]["stdout"]}\n"
+            if response_json["cells"][-1]["display_data"] is not None and len(response_json["cells"][-1]["display_data"]) > 0:
+                ret_str += f"display_data: {response_json["cells"][-1]["display_data"]}\n"
+            if response_json["cells"][-1]["stderr"] is not None and len(response_json["cells"][-1]["stderr"]) > 0:
+                ret_str += f"stderr: {response_json["cells"][-1]["stderr"]}\n"
+            if response_json["cells"][-1]["error"] is not None and len(response_json["cells"][-1]["error"]) > 0:
+                ret_str += f"errors: {response_json["cells"][-1]["error"]}\n"
+            return ret_str
+        except Exception as e:
+            logger.error(f"Error in get_jupyter_mode_result: {e}")
             return "no stdout here"
 
 
