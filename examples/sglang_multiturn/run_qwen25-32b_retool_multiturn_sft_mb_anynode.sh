@@ -20,6 +20,10 @@ ulimit -n 65535
 
 PROJECT_DIR="$(pwd)"
 CONFIG_PATH="$PROJECT_DIR/examples/sglang_multiturn/config"
+WANDB_PROJECT=retool_async_rl
+WANDB_EXPERIMENT_BASE=qwen2.5-32b_function_rm-retool-async-sgl-sft-bsz128-n8
+CKPT_PATH=/user/${USER_ID}/checkpoints/${WANDB_PROJECT}/${WANDB_EXPERIMENT_BASE}
+WANDB_EXPERIMENT=${WANDB_EXPERIMENT_BASE}-v$(date +"%y%m%d%H%M")-${WORLD_SIZE}xnode-${JOB_ID}
 
 ulimit -n 65535
 
@@ -92,13 +96,14 @@ if [ $RANK -eq 0 ]; then
         algorithm.use_kl_in_reward=False \
         trainer.critic_warmup=0 \
         trainer.logger=['console','wandb'] \
-        trainer.project_name='retool_async_rl' \
-        trainer.experiment_name='qwen2.5-32b_function_rm-retool-async-sgl-sft-n8-v2506031100-4xnode' \
+        trainer.project_name=${WANDB_PROJECT} \
+        trainer.experiment_name=${WANDB_EXPERIMENT} \
         trainer.val_before_train=True \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=${WORLD_SIZE} \
-        trainer.save_freq=-1 \
+        trainer.save_freq=20 \
         trainer.test_freq=20 \
         trainer.total_training_steps=500 \
+        trainer.default_local_dir=${CKPT_PATH} \
         trainer.total_epochs=1 $@
 fi
