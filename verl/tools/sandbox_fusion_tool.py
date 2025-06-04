@@ -209,7 +209,7 @@ class SandboxFusionTool(BaseTool):
             'Accept': 'application/json'
         }
         try:
-            response = requests.request("POST", self.sandbox_fusion_url, headers=headers, data=payload, timeout=timeout)
+            response = requests.request("POST", self.sandbox_fusion_url, headers=headers, data=payload)
         except Exception as e:
             logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}")
             return "no stdout here"
