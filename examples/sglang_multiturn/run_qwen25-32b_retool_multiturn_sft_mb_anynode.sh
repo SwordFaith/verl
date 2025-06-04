@@ -69,7 +69,7 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.model.path=/user/longxiang1/checkpoints/retool-multiturn-sft/retool-multiturn-sft-qwen2.5-32b-sp8-mb/global_step_28 \
         actor_rollout_ref.actor.use_dynamic_bsz=True \
         actor_rollout_ref.model.use_remove_padding=True \
-        actor_rollout_ref.model.use_liger=True \
+        actor_rollout_ref.model.use_liger=False \
         actor_rollout_ref.model.enable_gradient_checkpointing=True \
         +actor_rollout_ref.model.enable_activation_offloading=True \
         actor_rollout_ref.actor.optim.lr=1e-6 \
@@ -85,7 +85,7 @@ if [ $RANK -eq 0 ]; then
         +actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
         actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
         actor_rollout_ref.rollout.name=sglang_async \
-        actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+        actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
         actor_rollout_ref.rollout.n=8 \
         actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/examples/sglang_multiturn/config/tool_config/sandbox_fusion_retool_config_mb.yaml" \
         actor_rollout_ref.ref.fsdp_config.param_offload=True \
@@ -97,7 +97,7 @@ if [ $RANK -eq 0 ]; then
         trainer.val_before_train=True \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=${WORLD_SIZE} \
-        trainer.save_freq=10 \
+        trainer.save_freq=-1 \
         trainer.test_freq=20 \
         trainer.total_training_steps=500 \
         trainer.total_epochs=1 $@

@@ -97,7 +97,7 @@ if [ $RANK -eq 0 ]; then
         trainer.val_before_train=True \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=${WORLD_SIZE} \
-        trainer.save_freq=10 \
+        trainer.save_freq=-1 \
         trainer.test_freq=20 \
         trainer.total_training_steps=500 \
         trainer.total_epochs=1 $@
