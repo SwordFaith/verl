@@ -198,18 +198,18 @@ class SandboxFusionTool(BaseTool):
     def get_jupyter_mode_result(self, instance_id, timeout=300):
         payload = json.dumps({
             "cells": self._instance_dict[instance_id]["cells"],
-            "cell_timeout": 0,
-            "total_timeout": timeout,
+            # "cell_timeout": 0,
+            # "total_timeout": timeout,
             "kernel": "python3",
-            "files": {},
-            "fetch_files": [],
+            # "files": {},
+            # "fetch_files": [],
         })
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
+        # headers = {
+        #     'Content-Type': 'application/json',
+        #     'Accept': 'application/json'
+        # }
         try:
-            response = requests.request("POST", self.sandbox_fusion_url, headers=headers, data=payload)
+            response = requests.request("POST", self.sandbox_fusion_url, json=payload)
         except Exception as e:
             logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}")
             return "no stdout here"
