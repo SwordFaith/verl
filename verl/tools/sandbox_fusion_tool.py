@@ -221,8 +221,8 @@ class SandboxFusionTool(BaseTool):
             ret_str = ""
             if response_json["cells"][-1]["stdout"] is not None and len(response_json["cells"][-1]["stdout"]) > 0:
                 ret_str += f'stdout: {response_json["cells"][-1]["stdout"]}\n'
-            if response_json["cells"][-1]["display_data"] is not None and len(response_json["cells"][-1]["display_data"]) > 0:
-                ret_str += f'display_data: {response_json["cells"][-1]["display_data"]}\n'
+            if response_json["cells"][-1]["display"] is not None and len(response_json["cells"][-1]["display"]) > 0:
+                ret_str += f'displays: {response_json["cells"][-1]["display"]}\n'
             if response_json["cells"][-1]["stderr"] is not None and len(response_json["cells"][-1]["stderr"]) > 0:
                 ret_str += f'stderr: {response_json["cells"][-1]["stderr"]}\n'
             if response_json["cells"][-1]["error"] is not None and len(response_json["cells"][-1]["error"]) > 0:
