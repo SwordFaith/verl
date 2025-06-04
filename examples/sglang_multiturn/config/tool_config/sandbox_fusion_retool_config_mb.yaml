@@ -1,7 +1,7 @@
 tools:
   - class_name: "verl.tools.sandbox_fusion_tool.SandboxFusionTool"
     config:
-      sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co
+      sandbox_fusion_url: https://sd04qmtd8e6v9i08l9l00.apigateway-cn-beijing.volceapi.com
       num_workers: 20
       rate_limit: 20
       jupyter_mode: True
