@@ -164,6 +164,7 @@ class SandboxFusionTool(BaseTool):
             self._instance_dict[instance_id]["cells"].append(code)
 
         if self.jupyter_mode:
+            # Use Ray's execution pool with rate limiting for jupyter mode
             result = await self.execution_pool.execute.remote(self.get_jupyter_mode_result, instance_id)
         else:
             result = await self.execution_pool.execute.remote(self.execute_code, instance_id, code)
@@ -172,7 +173,6 @@ class SandboxFusionTool(BaseTool):
         # update the reward
         # print(f"self._instance_dict: {self._instance_dict}, prime_tools execute are called")
         self._instance_dict[instance_id]["reward"].append(result.strip())
-
         return result, result, {}
 
     def execute_code(self, instance_id, code):
@@ -197,18 +197,15 @@ class SandboxFusionTool(BaseTool):
             return "no stdout here"
     
     def get_jupyter_mode_result(self, instance_id, timeout=300):
+        # Create a new payload for each request with all cells
         payload = {
             "cells": self._instance_dict[instance_id]["cells"],
-            # "cell_timeout": 0,
-            # "total_timeout": timeout,
+            "cell_timeout": 0,
+            "total_timeout": timeout,
             "kernel": "python3",
-            # "files": {},
-            # "fetch_files": [],
+            "files": {},
+            "fetch_files": [],
         }
-        # headers = {
-        #     'Content-Type': 'application/json',
-        #     'Accept': 'application/json'
-        # }
         try:
             response = requests.request("POST", self.sandbox_fusion_url, json=payload)
         except Exception as e:
