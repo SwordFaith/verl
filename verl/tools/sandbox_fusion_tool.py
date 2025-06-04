@@ -132,13 +132,14 @@ class SandboxFusionTool(BaseTool):
         self.rate_limit = config.get("rate_limit", 10)
         self.execution_pool = init_execution_pool(num_workers=self.num_workers, worker_actor_cls=ExecutionWorker)
         self.sandbox_fusion_url = config.get("sandbox_fusion_url","")
+        if self.sandbox_fusion_url == "":
+            raise ValueError("sandbox_fusion_url is not set")
         self.jupyter_mode = config.get("jupyter_mode", False)
         if self.jupyter_mode:
             self.sandbox_fusion_url = self.sandbox_fusion_url.rstrip("/") + "/run_jupyter"
         else:
             self.sandbox_fusion_url = self.sandbox_fusion_url.rstrip("/") + "/run_code"
-        if self.sandbox_fusion_url == "":
-            raise ValueError("sandbox_fusion_url is not set")
+        print(f"sandbox_fusion_url: {self.sandbox_fusion_url}")
 
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return self.tool_schema
