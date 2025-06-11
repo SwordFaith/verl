@@ -277,7 +277,7 @@ class SandboxFusionTool(BaseTool):
             """jupyter style code use varaiable without print, and reference code in other fields"""
             cell_code_lines = cell_code.split("\n")
             last_line = cell_code_lines[-1]
-            if last_line.startswith("print("):
+            if "print(" in last_line:
                 return cell_code
             elif "=" in last_line:
                 variables = last_line.split("=")[0].strip()
