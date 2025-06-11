@@ -40,6 +40,7 @@ ROLLOUT_TP=${ROLLOUT_TP:-2}
 OFFLOAD=True
 
 ulimit -n 65535
+ulimit -u 131072
 
 ray stop --force
 
@@ -104,6 +105,7 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.actor.fsdp_config.param_offload=${OFFLOAD} \
         actor_rollout_ref.actor.fsdp_config.optimizer_offload=${OFFLOAD} \
         actor_rollout_ref.actor.ulysses_sequence_parallel_size=${ACTOR_SP} \
+        actor_rollout_ref.actor.fsdp_config.strategy=fsdp2 \
         +actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
         actor_rollout_ref.rollout.tensor_model_parallel_size=${ROLLOUT_TP} \
         actor_rollout_ref.rollout.name=sglang_async \
