@@ -21,6 +21,7 @@ from contextlib import ExitStack
 from enum import Enum
 from typing import Any, Callable, Optional, Tuple, TypeVar
 from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
 
 import ray
 import ray.actor
@@ -65,8 +66,10 @@ class TokenBucketWorker:
 
 
 class ExecutionWorker:
-    def __init__(self, enable_global_rate_limit=True, rate_limit=10):
+    def __init__(self, enable_global_rate_limit=True, rate_limit=10, max_workers=10):
         self.rate_limit_worker = self._init_rate_limit(rate_limit) if enable_global_rate_limit else None
+        self._thread_pool = ThreadPoolExecutor(max_workers=max_workers)
+        self._max_workers = max_workers
 
     def _init_rate_limit(self, rate_limit):
         # TODO validation for rate_limit
@@ -81,18 +84,27 @@ class ExecutionWorker:
             stack.callback(self.rate_limit_worker.release.remote)
             ray.get(self.rate_limit_worker.acquire.remote())
             try:
-                return fn(*fn_args, **fn_kwargs)
+                # Submit the task to the thread pool
+                future = self._thread_pool.submit(fn, *fn_args, **fn_kwargs)
+                return future.result()
             except Exception as e:
-                # TODO we should make this available to the tool caller
                 logger.warning(f"Error when executing code: {e}")
+                raise
+
+    def shutdown(self):
+        """Shutdown the thread pool gracefully"""
+        self._thread_pool.shutdown(wait=True)
 
 
 def init_execution_pool(num_workers: int, enable_global_rate_limit=True, rate_limit=10, mode: PoolMode = PoolMode.ThreadMode):
     if mode == PoolMode.ThreadMode:
-        return ray.remote(ExecutionWorker).options(max_concurrency=num_workers).remote(enable_global_rate_limit=enable_global_rate_limit, rate_limit=rate_limit)
+        return ray.remote(ExecutionWorker).options(max_concurrency=num_workers).remote(
+            enable_global_rate_limit=enable_global_rate_limit, 
+            rate_limit=rate_limit,
+            max_workers=min(num_workers, 128)  # Limit max workers to avoid resource exhaustion
+        )
     else:
         raise NotImplementedError("Process mode is not implemented yet")
-        # return ray.util.multiprocessing.Pool(processes=num_workers)
 
 
 class SandboxFusionTool(BaseTool):
@@ -128,8 +140,8 @@ class SandboxFusionTool(BaseTool):
         super().__init__(config, tool_schema)
         self._instance_dict = {}
         # TODO: better documentation for the config
-        self.num_workers = config.get("num_workers", 10)
-        self.rate_limit = config.get("rate_limit", 10)
+        self.num_workers = min(config.get("num_workers", 10), 128)  # Limit max workers
+        self.rate_limit = min(config.get("rate_limit", 10), 128)  # Limit rate limit
         self.default_timeout = config.get("default_timeout", 30)
         self.cell_timeout = config.get("cell_timeout", 10)
         self.default_language = config.get("default_language", "python")

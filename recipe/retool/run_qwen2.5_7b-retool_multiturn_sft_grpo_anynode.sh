@@ -12,9 +12,9 @@ export WANDB_DIR=/data/tensorboard/
 export RUST_BACKTRACE=1
 export HYDRA_FULL_ERROR=1
 export PIP_INDEX_URL=https://swnexus.thuwayinfo.com/repository/group-pypi/simple
-export http_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
-export https_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
-export no_proxy=127.0.0.1,localhost,*.ali-dev.modelbest.co,swnexus.thuwayinfo.com,code-sandbox-wangfeng
+# export http_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
+# export https_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
+# export no_proxy=127.0.0.1,localhost,*.ali-dev.modelbest.co,swnexus.thuwayinfo.com,code-sandbox-wangfeng
 
 ulimit -n 65535
 
@@ -41,6 +41,8 @@ OFFLOAD=True
 
 ulimit -n 65535
 ulimit -u 131072
+# ulimit -s 65535  # 增加栈大小
+# ulimit -t unlimited  # 增加 CPU 时间限制
 # check the limit value
 ulimit -a 
 
