@@ -43,6 +43,8 @@ ulimit -n 65535
 
 ray stop --force
 
+python3 -m uv pip install -i $PIP_INDEX_URL -e .
+
 if [ $WORLD_SIZE -gt 1 ]; then
     # Start ray cluster
     MASTER_IP=$(getent hosts $MASTER_ADDR | awk '{print $1}')
@@ -84,7 +86,7 @@ if [ $RANK -eq 0 ]; then
         data.return_raw_chat=True \
         data.train_files=$HOME/data/retool_prompt_dapo/train.parquet \
         data.val_files=$HOME/data/retool_prompt_aime2024/train.parquet \
-        actor_rollout_ref.model.path=$HOME/checkpoints/retool-multiturn-sft/retool-multiturn-sft-qwen2.5-7b-sp4-mb/global_step_84 \
+        actor_rollout_ref.model.path=$HOME/checkpoints/retool-multiturn-sft/retool-multiturn-sft-qwen2.5-7b-sp4-new-template/global_step_84 \
         actor_rollout_ref.actor.use_dynamic_bsz=True \
         actor_rollout_ref.model.use_remove_padding=True \
         actor_rollout_ref.model.use_liger=False \
@@ -117,7 +119,7 @@ if [ $RANK -eq 0 ]; then
         trainer.val_before_train=True \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=${WORLD_SIZE} \
-        trainer.save_freq=20 \
+        trainer.save_freq=50 \
         trainer.test_freq=20 \
         trainer.total_training_steps=500 \
         trainer.default_local_dir=${CKPT_PATH} \

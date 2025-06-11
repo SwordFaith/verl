@@ -4,13 +4,13 @@ tools:
       sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co 
       num_workers: 4096
       rate_limit: 4096
-      mode: "run_code"  # run_code, run_jupyter, sim_jupyter
+      mode: "sim_jupyter"  # run_code, run_jupyter, sim_jupyter
       timeout: 10
     tool_schema:
       type: "function"
       function:
         name: "code_interpreter"
-        description: "Execute Python code to perform calculations, data analysis, or other computational tasks. Use the `print()` function to output results. The execution will return the printed output. If nothing is printed, an empty string will be returned. Note that you should not assume previous code will be executed in the same ipykernel session."
+        description: "Execute Python code to perform calculations, data analysis, or other computational tasks with ipykernel."
         parameters:
           type: "object"
           properties:
