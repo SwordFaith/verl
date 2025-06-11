@@ -1,5 +1,5 @@
 tools:
-  - class_name: "verl.tools.sandbox_fusion_tool.SandboxFusionTool"
+  - class_name: "verl.tools.sandbox_fusion_tools.SandboxFusionTool"
     config:
       sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co 
       num_workers: 4096
