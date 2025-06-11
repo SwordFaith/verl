@@ -1,4 +1,6 @@
-# Copyright 2025 Bytedance Ltd. and/or its affiliates
+# Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2023-2024 SGLang Team
+# Copyright 2025 ModelBest Inc. and/or its affiliates
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,21 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
+import json
+import requests
 import logging
 import os
 import threading
-from contextlib import ExitStack
-from enum import Enum
 from typing import Any, Callable, Optional, Tuple, TypeVar
 from uuid import uuid4
-
+from contextlib import ExitStack
+import time
 import ray
 import ray.actor
-import ray.util.multiprocessing
 
-from verl.tools.base_tool import BaseTool
-from verl.utils.reward_score.sandbox_fusion.utils import _process_single_case
+from verl.utils.reward_score import prime_code
+from verl.utils.reward_score.sandbox_fusion.utils import _process_single_case, call_sandbox_api
 
+from .base_tool import BaseTool
 from .schemas import OpenAIFunctionToolSchema
 
 logger = logging.getLogger(__name__)
@@ -129,12 +133,18 @@ class SandboxFusionTool(BaseTool):
         self.num_workers = config.get("num_workers", 10)
         self.rate_limit = config.get("rate_limit", 10)
         self.default_timeout = config.get("default_timeout", 30)
+        self.cell_timeout = config.get("cell_timeout", 10)
         self.default_language = config.get("default_language", "python")
         self.enable_global_rate_limit = config.get("enable_global_rate_limit", True)
         self.execution_pool = init_execution_pool(num_workers=self.num_workers, enable_global_rate_limit=self.enable_global_rate_limit, rate_limit=self.rate_limit, mode=PoolMode.ThreadMode)
         self.sandbox_fusion_url = config.get("sandbox_fusion_url", "")
         if self.sandbox_fusion_url == "":
             raise ValueError("sandbox_fusion_url is not set")
+        self.mode = config.get("mode", "run_code")
+        if self.mode == "run_jupyter":
+            self.sandbox_fusion_url = self.sandbox_fusion_url.rstrip("/") + "/run_jupyter"
+        else:
+            self.sandbox_fusion_url = self.sandbox_fusion_url.rstrip("/") + "/run_code"
         log_msg = f"Init SandboxFusionTool with config: {config}"
         logger.info(log_msg)
 
@@ -148,6 +158,7 @@ class SandboxFusionTool(BaseTool):
             "response": "",
             "ground_truth": ground_truth,
             "reward": [],
+            "cells": [],
         }
         return instance_id
 
@@ -157,10 +168,28 @@ class SandboxFusionTool(BaseTool):
         language = parameters.get("language", self.default_language)
         if not isinstance(code, str):
             code = str(code)
+        
+        # TODO: better documentation for the code
+        if len(code) > 0:
+            if self.mode in ["run_jupyter", "sim_jupyter"]:
+                self._instance_dict[instance_id]["cells"].append(code)
+        elif self.mode == "run_code":
+            logger.error(f"no code parsed, instance_id: {instance_id}, parameters: {parameters}")
+            return "no code parsed", 0., {}
+        else:
+            raise ValueError(f"Unknown mode: {self.mode}")
 
-        result = await self.execution_pool.execute.remote(self.execute_code, instance_id, code, timeout, language)
+        if self.mode == "run_jupyter":
+            # Use Ray's execution pool with rate limiting for jupyter mode
+            result = await self.execution_pool.execute.remote(self.get_jupyter_mode_result, instance_id, timeout)
+        elif self.mode == "run_code":
+            result = await self.execution_pool.execute.remote(self.execute_code, instance_id, code, timeout, language)
+        elif self.mode == "sim_jupyter":
+            raise NotImplementedError("sim_jupyter is not implemented yet")
+        else:
+            raise ValueError(f"Unknown mode: {self.mode}")
 
-        return result, result, result.strip()
+        return result, 0., {}
 
     def execute_code(self, instance_id, code, timeout=30, language="python"):
         result_status, metadata = _process_single_case(0, None, None, self.sandbox_fusion_url, code, timeout, language)
@@ -171,6 +200,56 @@ class SandboxFusionTool(BaseTool):
             return actual_output
         else:
             return "no stdout here"
+    
+    def get_jupyter_mode_result(self, instance_id, timeout: Optional[int] = None):
+        # Create a new payload for each request with all cells
+        payload = {
+            "cells": self._instance_dict[instance_id]["cells"],
+            "cell_timeout": self.cell_timeout,
+            "total_timeout": timeout if timeout is not None else self.default_timeout,
+            "kernel": "python3",
+            "files": {},
+            "fetch_files": [],
+        }
+        try:
+            response = requests.request("POST", self.sandbox_fusion_url, json=payload)
+        except Exception as e:
+            logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}")
+            return f"Error in calling code interpreter: {e}"
+        if response.status_code != 200:
+            logger.error(f"Error in get_jupyter_mode_result: {response.status_code}\npayload: {payload}\nresponse: {response.text}")
+            try:
+                response_json = response.json()
+                error_message = response_json["error_message"]
+                return error_message
+            except Exception as e:
+                return f"Error in calling code interpreter: {response.text}"
+        try:
+            response_json = response.json()
+            status = response_json["status"]
+            if status == "Success":
+                ret_str = ""
+                if response_json["cells"][-1]["stdout"] is not None and len(response_json["cells"][-1]["stdout"]) > 0:
+                    ret_str += f'stdout: {response_json["cells"][-1]["stdout"]}\n'
+                if response_json["cells"][-1]["display"] is not None and len(response_json["cells"][-1]["display"]) > 0:
+                    ret_str += f'displays: {response_json["cells"][-1]["display"]}\n'
+                if response_json["cells"][-1]["stderr"] is not None and len(response_json["cells"][-1]["stderr"]) > 0:
+                    ret_str += f'stderr: {response_json["cells"][-1]["stderr"]}\n'
+                if response_json["cells"][-1]["error"] is not None and len(response_json["cells"][-1]["error"]) > 0:
+                    ret_str += f'errors: {response_json["cells"][-1]["error"]}\n'
+                return ret_str
+            elif status == "Failed":
+                execution_status = response_json["driver"]["status"]
+                if execution_status == "TimeLimitExceeded":
+                    return f"Execution time limit exceeded"
+                else:
+                    raise ValueError(f"Unknown execution status: {execution_status}\nresponse: {response.text}")
+            else:
+                raise ValueError(f"Unknown response status: {status}\nresponse: {response.text}")
+        except Exception as e:
+            logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
+            return f"Error in calling code interpreter: {response.text}"
+
 
     async def calc_reward(self, instance_id: str, **kwargs) -> str:
         return self._instance_dict[instance_id]["reward"]

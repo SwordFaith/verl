@@ -1,0 +1,24 @@
+tools:
+  - class_name: "verl.tools.sandbox_fusion_tool.SandboxFusionTool"
+    config:
+      sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co 
+      num_workers: 4096
+      rate_limit: 4096
+      mode: "run_code"  # run_code, run_jupyter, sim_jupyter
+      timeout: 10
+    tool_schema:
+      type: "function"
+      function:
+        name: "code_interpreter"
+        description: "Execute Python code to perform calculations, data analysis, or other computational tasks. Use the `print()` function to output results. The execution will return the printed output. If nothing is printed, an empty string will be returned. Note that you should not assume previous code will be executed in the same session."
+        parameters:
+          type: "object"
+          properties:
+            code:
+              type: "string"
+              description: "The Python code to be executed. This can include calculations, data manipulation, or any valid Python code."
+            language:
+              type: "string"
+              description: "The programming language of the code. Currently only Python is supported."
+              default: "python"
+          required: ["code"]

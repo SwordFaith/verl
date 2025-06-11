@@ -7,8 +7,9 @@ export HYDRA_FULL_ERROR=1
 
 ulimit -n 65535
 
-EXPERIMENT_NAME=retool-multiturn-sft-qwen2.5-7b-sp4
+EXPERIMENT_NAME=retool-multiturn-sft-qwen2.5-7b-sp4-new-template
 
+HOME=/wuxi_gpfs/user/longxiang1
 torchrun --nnodes=1 --nproc_per_node=8 \
      -m verl.trainer.fsdp_sft_trainer \
     data.max_length=16384 \
@@ -28,7 +29,7 @@ torchrun --nnodes=1 --nproc_per_node=8 \
     trainer.project_name=retool-multiturn-sft \
     trainer.experiment_name=$EXPERIMENT_NAME \
     trainer.logger=['console','wandb'] \
-    trainer.total_epochs=8 \
+    trainer.total_epochs=12 \
     trainer.default_hdfs_dir=null $@ \
     ulysses_sequence_parallel_size=4 \
     use_remove_padding=true
