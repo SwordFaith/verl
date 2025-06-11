@@ -17,14 +17,13 @@
 import logging
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from enum import Enum
 from typing import Any, Callable, Optional, Tuple, TypeVar
 from uuid import uuid4
-from concurrent.futures import ThreadPoolExecutor
 
 import ray
-import ray.actor
 import requests
 
 from verl.utils.reward_score.sandbox_fusion.utils import _process_single_case
@@ -36,6 +35,9 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 T = TypeVar("T")
+
+
+MAX_THREAD_POOL_WORKERS = 128
 
 
 class PoolMode(Enum):
@@ -98,10 +100,14 @@ class ExecutionWorker:
 
 def init_execution_pool(num_workers: int, enable_global_rate_limit=True, rate_limit=10, mode: PoolMode = PoolMode.ThreadMode):
     if mode == PoolMode.ThreadMode:
-        return ray.remote(ExecutionWorker).options(max_concurrency=num_workers).remote(
-            enable_global_rate_limit=enable_global_rate_limit, 
-            rate_limit=rate_limit,
-            max_workers=min(num_workers, 128)  # Limit max workers to avoid resource exhaustion
+        return (
+            ray.remote(ExecutionWorker)
+            .options(max_concurrency=num_workers)
+            .remote(
+                enable_global_rate_limit=enable_global_rate_limit,
+                rate_limit=rate_limit,
+                max_workers=min(num_workers, MAX_THREAD_POOL_WORKERS),  # Limit max workers to avoid resource exhaustion
+            )
         )
     else:
         raise NotImplementedError("Process mode is not implemented yet")
@@ -140,8 +146,8 @@ class SandboxFusionTool(BaseTool):
         super().__init__(config, tool_schema)
         self._instance_dict = {}
         # TODO: better documentation for the config
-        self.num_workers = min(config.get("num_workers", 10), 128)  # Limit max workers
-        self.rate_limit = min(config.get("rate_limit", 10), 128)  # Limit rate limit
+        self.num_workers = min(config.get("num_workers", 10), MAX_THREAD_POOL_WORKERS)  # Limit max workers
+        self.rate_limit = min(config.get("rate_limit", 10), MAX_THREAD_POOL_WORKERS)  # Limit rate limit
         self.default_timeout = config.get("default_timeout", 30)
         self.cell_timeout = config.get("cell_timeout", 10)
         self.default_language = config.get("default_language", "python")
