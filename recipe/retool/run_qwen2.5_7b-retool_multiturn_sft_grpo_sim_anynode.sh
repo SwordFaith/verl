@@ -63,7 +63,7 @@ if [ $WORLD_SIZE -gt 1 ]; then
         --num-gpus=8 \
         --num-cpus=80 \
         --include-dashboard=false 
-        sleep 10
+        sleep 30
         # 等待head节点就绪
         echo "Head is ready"
     else
