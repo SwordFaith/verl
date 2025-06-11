@@ -14,21 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from enum import Enum
-import json
-import requests
 import logging
 import os
 import threading
+from contextlib import ExitStack
+from enum import Enum
 from typing import Any, Callable, Optional, Tuple, TypeVar
 from uuid import uuid4
-from contextlib import ExitStack
-import time
+
 import ray
 import ray.actor
+import requests
 
-from verl.utils.reward_score import prime_code
-from verl.utils.reward_score.sandbox_fusion.utils import _process_single_case, call_sandbox_api
+from verl.utils.reward_score.sandbox_fusion.utils import _process_single_case
 
 from .base_tool import BaseTool
 from .schemas import OpenAIFunctionToolSchema
@@ -168,28 +166,27 @@ class SandboxFusionTool(BaseTool):
         language = parameters.get("language", self.default_language)
         if not isinstance(code, str):
             code = str(code)
-        
+
         # TODO: better documentation for the code
         if len(code) > 0:
             if self.mode in ["run_jupyter", "sim_jupyter"]:
                 self._instance_dict[instance_id]["cells"].append(code)
         elif self.mode == "run_code":
             logger.error(f"no code parsed, instance_id: {instance_id}, parameters: {parameters}")
-            return "no code parsed", 0., {}
+            return "no code parsed", 0.0, {}
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
 
         if self.mode == "run_jupyter":
-            # Use Ray's execution pool with rate limiting for jupyter mode
             result = await self.execution_pool.execute.remote(self.get_jupyter_mode_result, instance_id, timeout)
         elif self.mode == "run_code":
             result = await self.execution_pool.execute.remote(self.execute_code, instance_id, code, timeout, language)
         elif self.mode == "sim_jupyter":
-            raise NotImplementedError("sim_jupyter is not implemented yet")
+            result = await self.execution_pool.execute.remote(self.get_sim_jupyter_mode_result, instance_id, timeout)
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
 
-        return result, 0., {}
+        return result, 0.0, {}
 
     def execute_code(self, instance_id, code, timeout=30, language="python"):
         result_status, metadata = _process_single_case(0, None, None, self.sandbox_fusion_url, code, timeout, language)
@@ -200,7 +197,7 @@ class SandboxFusionTool(BaseTool):
             return actual_output
         else:
             return "no stdout here"
-    
+
     def get_jupyter_mode_result(self, instance_id, timeout: Optional[int] = None):
         # Create a new payload for each request with all cells
         payload = {
@@ -222,7 +219,7 @@ class SandboxFusionTool(BaseTool):
                 response_json = response.json()
                 error_message = response_json["error_message"]
                 return error_message
-            except Exception as e:
+            except Exception:
                 return f"Error in calling code interpreter: {response.text}"
         try:
             response_json = response.json()
@@ -230,18 +227,18 @@ class SandboxFusionTool(BaseTool):
             if status == "Success":
                 ret_str = ""
                 if response_json["cells"][-1]["stdout"] is not None and len(response_json["cells"][-1]["stdout"]) > 0:
-                    ret_str += f'stdout: {response_json["cells"][-1]["stdout"]}\n'
+                    ret_str += f"stdout: {response_json['cells'][-1]['stdout']}\n"
                 if response_json["cells"][-1]["display"] is not None and len(response_json["cells"][-1]["display"]) > 0:
-                    ret_str += f'displays: {response_json["cells"][-1]["display"]}\n'
+                    ret_str += f"displays: {response_json['cells'][-1]['display']}\n"
                 if response_json["cells"][-1]["stderr"] is not None and len(response_json["cells"][-1]["stderr"]) > 0:
-                    ret_str += f'stderr: {response_json["cells"][-1]["stderr"]}\n'
+                    ret_str += f"stderr: {response_json['cells'][-1]['stderr']}\n"
                 if response_json["cells"][-1]["error"] is not None and len(response_json["cells"][-1]["error"]) > 0:
-                    ret_str += f'errors: {response_json["cells"][-1]["error"]}\n'
+                    ret_str += f"errors: {response_json['cells'][-1]['error']}\n"
                 return ret_str
             elif status == "Failed":
                 execution_status = response_json["driver"]["status"]
                 if execution_status == "TimeLimitExceeded":
-                    return f"Execution time limit exceeded"
+                    return "Execution time limit exceeded"
                 else:
                     raise ValueError(f"Unknown execution status: {execution_status}\nresponse: {response.text}")
             else:
@@ -250,6 +247,92 @@ class SandboxFusionTool(BaseTool):
             logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
             return f"Error in calling code interpreter: {response.text}"
 
+    def get_sim_jupyter_mode_result(self, instance_id, timeout: Optional[int] = None):
+        if len(self._instance_dict[instance_id]["cells"]) == 0:
+            return "no code parsed"
+        elif len(self._instance_dict[instance_id]["cells"]) == 1:
+            prev_cells = []
+        else:
+            prev_cells = self._instance_dict[instance_id]["cells"][:-1]
+
+        def fix_jupyter_style_cell_code(cell_code: str) -> bool:
+            """jupyter style code use varaiable without print, and reference code in other fields"""
+            cell_code_lines = cell_code.split("\n")
+            last_line = cell_code_lines[-1]
+            if last_line.startswith("print("):
+                return cell_code
+            elif "=" in last_line:
+                variables = last_line.split("=")[0].strip()
+                if "," in variables:
+                    variables = variables.split(",")
+                else:
+                    variables = [variables]
+                for variable in variables:
+                    last_line += f"print('{variable}:', {variable})"
+            else:
+                last_line = f"print('{last_line}:', {last_line})"
+            cell_code_lines[-1] = last_line
+            return "\n".join(cell_code_lines)
+
+        cur_cell = self._instance_dict[instance_id]["cells"][-1]
+        cur_cell = fix_jupyter_style_cell_code(cur_cell)
+        assembled_cells = prev_cells + [cur_cell]
+        assembled_code = "\n".join(assembled_cells)
+        payload = {
+            "run_timeout": timeout if timeout is not None else self.default_timeout,
+            "code": assembled_code,
+            "language": "python",
+        }
+        try:
+            response = requests.request("POST", self.sandbox_fusion_url, json=payload)
+        except Exception as e:
+            logger.error(f"Error in get_sim_jupyter_mode_result: {e}\npayload: {payload}")
+            return f"Error in calling code interpreter: {e}"
+        if response.status_code != 200:
+            logger.error(f"Error in get_sim_jupyter_mode_result: {response.status_code}\npayload: {payload}\nresponse: {response.text}")
+            try:
+                response_json = response.json()
+                error_message = response_json["error_message"]
+                return error_message
+            except Exception:
+                return f"Error in calling code interpreter: {response.text}"
+        try:
+            response_json = response.json()
+            status = response_json["status"]
+            if status == "Success":
+                ret_str = ""
+                if response_json["run_result"]["return_code"] is not None and response_json["run_result"]["return_code"] != 0:
+                    ret_str += f"return_code: {response_json['run_result']['return_code']}\n"
+                if response_json["run_result"]["stdout"] is not None and len(response_json["run_result"]["stdout"]) > 0:
+                    ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
+                if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
+                    ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
+                return ret_str
+            elif status == "Failed":
+                execution_status = response_json["run_result"]["status"]
+                if execution_status == "TimeLimitExceeded":
+                    ret_str = f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, timeout: {payload['run_timeout']}"
+                    if response_json["run_result"]["stdout"] is not None and len(response_json["run_result"]["stdout"]) > 0:
+                        ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
+                    if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
+                        ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
+                elif execution_status == "Error":
+                    ret_str = ""
+                    if response_json["run_result"]["return_code"] is not None and response_json["run_result"]["return_code"] != 0:
+                        ret_str += f"return_code: {response_json['run_result']['return_code']}\n"
+                    if response_json["run_result"]["stdout"] is not None and len(response_json["run_result"]["stdout"]) > 0:
+                        ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
+                    if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
+                        ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
+                else:
+                    raise ValueError(f"Unknown execution status: {execution_status}\nresponse: {response.text}")
+            elif status == "SandboxError":
+                raise ValueError(f"Sandbox error: {response.text}")
+            else:
+                raise ValueError(f"Unknown response status: {status}\nresponse: {response.text}")
+        except Exception as e:
+            logger.error(f"Error in get_sim_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
+            return f"Error in calling code interpreter: {response.text}"
 
     async def calc_reward(self, instance_id: str, **kwargs) -> str:
         return self._instance_dict[instance_id]["reward"]
