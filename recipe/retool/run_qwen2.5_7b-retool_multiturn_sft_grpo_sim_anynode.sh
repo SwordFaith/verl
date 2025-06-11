@@ -31,7 +31,7 @@ PROJECT_DIR="$(pwd)"
 RESPONSE_LENGTH=${RESPONSE_LENGTH:-$((1024 * 16))}
 CONFIG_PATH="$PROJECT_DIR/recipe/retool/config"
 WANDB_PROJECT=retool_async_rl
-WANDB_EXPERIMENT_BASE=qwen2.5-7b_function_rm-retool-async-sgl-sft-grpo-mb-bsz${train_prompt_bsz}-n${n_resp_per_prompt}-${RESPONSE_LENGTH}
+WANDB_EXPERIMENT_BASE=qwen2.5-7b_function_rm-retool-async-sgl-sft-grpo-sim-jupyter-mb-bsz${train_prompt_bsz}-n${n_resp_per_prompt}-${RESPONSE_LENGTH}
 USER_ID=${USER_ID:-longxiang1}
 CKPT_PATH=$HOME/checkpoints/${WANDB_PROJECT}/${WANDB_EXPERIMENT_BASE}
 WANDB_EXPERIMENT=${WANDB_EXPERIMENT_BASE}-v$(date +"%y%m%d%H%M")-${WORLD_SIZE}xnode-${JOB_ID}
@@ -115,7 +115,7 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.rollout.name=sglang_async \
         actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
         actor_rollout_ref.rollout.n=${n_resp_per_prompt} \
-        actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/recipe/retool/config/tool_config/sandbox_fusion_retool_sim_jupyter_config.yaml" \
+        actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/recipe/retool/config/tool_config/sandbox_fusion_retool_config.yaml" \
         actor_rollout_ref.ref.fsdp_config.param_offload=${OFFLOAD} \
         algorithm.use_kl_in_reward=False \
         trainer.critic_warmup=0 \

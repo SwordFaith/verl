@@ -37,7 +37,7 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 T = TypeVar("T")
 
 
-MAX_THREAD_POOL_WORKERS = 128
+MAX_THREAD_POOL_WORKERS = 1024
 
 
 class PoolMode(Enum):
