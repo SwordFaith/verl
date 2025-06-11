@@ -16,7 +16,9 @@
 
 import logging
 import os
+import random
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from enum import Enum
@@ -273,7 +275,7 @@ class SandboxFusionTool(BaseTool):
         else:
             prev_cells = self._instance_dict[instance_id]["cells"][:-1]
 
-        def fix_jupyter_style_cell_code(cell_code: str) -> bool:
+        def fix_jupyter_style_cell_code(cell_code: str) -> str:
             """jupyter style code use varaiable without print, and reference code in other fields"""
             cell_code_lines = cell_code.split("\n")
             last_line = cell_code_lines[-1]
@@ -301,11 +303,27 @@ class SandboxFusionTool(BaseTool):
             "code": assembled_code,
             "language": "python",
         }
-        try:
-            response = requests.request("POST", self.sandbox_fusion_url, json=payload)
-        except Exception as e:
-            logger.error(f"Error in get_sim_jupyter_mode_result: {e}\npayload: {payload}")
-            return f"Error in calling code interpreter: {e}"
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.request("POST", self.sandbox_fusion_url, json=payload)
+                if response.status_code == 200:
+                    break
+                if attempt < max_retries - 1:
+                    delay = random.uniform(1, 5)
+                    logger.warning(f"Request failed with status {response.status_code}, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    continue
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = random.uniform(1, 5)
+                    logger.warning(f"Request failed with error: {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    continue
+                logger.error(f"Error in get_sim_jupyter_mode_result after {max_retries} attempts: {e}\npayload: {payload}")
+                return f"Error in calling code interpreter: {e}"
+
         if response.status_code != 200:
             logger.error(f"Error in get_sim_jupyter_mode_result: {response.status_code}\npayload: {payload}\nresponse: {response.text}")
             try:
