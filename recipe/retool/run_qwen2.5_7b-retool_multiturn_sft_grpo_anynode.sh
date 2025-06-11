@@ -41,6 +41,8 @@ OFFLOAD=True
 
 ulimit -n 65535
 ulimit -u 131072
+# check the limit value
+ulimit -a 
 
 ray stop --force
 
