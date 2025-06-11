@@ -2,8 +2,8 @@ tools:
   - class_name: "verl.tools.sandbox_fusion_tools.SandboxFusionTool"
     config:
       sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co 
-      num_workers: 4096
-      rate_limit: 4096
+      num_workers: 1024
+      rate_limit: 1024
       mode: "run_code"  # run_code, run_jupyter, sim_jupyter
       timeout: 10
     tool_schema:
