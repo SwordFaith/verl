@@ -5,7 +5,7 @@ tools:
       num_workers: 4096
       rate_limit: 4096
       mode: "run_code"  # run_code, run_jupyter, sim_jupyter
-      timeout: 10
+      default_timeout: 6
     tool_schema:
       type: "function"
       function:
