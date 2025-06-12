@@ -359,7 +359,7 @@ class SandboxFusionTool(BaseTool):
                         ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
                     if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
                         ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
-                    logger.warning(f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, timeout: {payload['run_timeout']}, response: {response.text}")
+                    logger.warning(f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, payload: {payload}, response: {response.text}")
                     return ret_str
                 elif execution_status == "Finished":
                     ret_str = ""
