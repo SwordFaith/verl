@@ -738,21 +738,24 @@ class SGLangRollout(BaseRollout):
             elif _req.state == AsyncRolloutRequestStateEnum.TOOL_CALLING:
                 if _req.messages[-1].tool_calls is not None:
                     parsed_tool_calls = _req.messages[-1].tool_calls
-                    tool_call_results = await asyncio.gather(
-                        *[
+                    is_tool_call_overlong = False
+                    tool_call_results = []
+                    for tool_call in parsed_tool_calls:
+                        tool_call_results.append(
                             self._tool_map[tool_call.function.name].execute(
                                 _req.request_id,
                                 tool_call.function.arguments,
                                 **_req.tools_kwargs[tool_call.function.name].get("execute_kwargs", {}),
                             )
-                            for tool_call in parsed_tool_calls
-                        ]
-                    )
+                        )
+                        if _req.check_if_tool_response_messages_overlong(self.tokenizer, tool_call_results):
+                            is_tool_call_overlong = True
+                            break
                     _req.add_tool_response_messages(self.tokenizer, [resp for resp, _, _ in tool_call_results])
                     for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
                         _req.update_metrics(metrics, tool_call.function.name)
-                    if len(_req.input_ids) >= self.config.max_model_len:
-                        finish_reason_type = FinishReasonTypeEnum.STOP
+                    if is_tool_call_overlong or len(_req.input_ids) >= self.config.max_model_len:
+                        finish_reason_type = FinishReasonTypeEnum.LENGTH
                         break
                     _req.state = AsyncRolloutRequestStateEnum.RUNNING
                 else:
