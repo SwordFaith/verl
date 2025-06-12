@@ -106,7 +106,13 @@ class ActorRolloutRefWorker(Worker):
         if not torch.distributed.is_initialized():
             rank = int(os.environ.get("RANK", 0))
             world_size = int(os.environ.get("WORLD_SIZE", 1))
-            torch.distributed.init_process_group(backend="cpu:gloo,cuda:nccl" if is_cuda_available else "cpu:gloo,npu:hccl", rank=rank, world_size=world_size)
+            from datetime import timedelta
+            torch.distributed.init_process_group(
+                backend="cpu:gloo,cuda:nccl" if is_cuda_available else "cpu:gloo,npu:hccl",
+                rank=rank,
+                world_size=world_size,
+                timeout=timedelta(seconds=3600),
+            )
 
         # build device mesh for FSDP
         world_size = torch.distributed.get_world_size()
