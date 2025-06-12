@@ -192,11 +192,9 @@ class SandboxFusionTool(BaseTool):
         if len(code) > 0:
             if self.mode in ["run_jupyter", "sim_jupyter"]:
                 self._instance_dict[instance_id]["cells"].append(code)
-        elif self.mode == "run_code":
+        else:
             logger.error(f"no code parsed, instance_id: {instance_id}, parameters: {parameters}")
             return "no code parsed", 0.0, {}
-        else:
-            raise ValueError(f"Unknown mode: {self.mode}")
 
         if self.mode == "run_jupyter":
             result = await self.execution_pool.execute.remote(self.get_jupyter_mode_result, instance_id, timeout)
