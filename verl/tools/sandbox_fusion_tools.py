@@ -352,7 +352,7 @@ class SandboxFusionTool(BaseTool):
             elif status == "Failed":
                 execution_status = response_json["run_result"]["status"]
                 # Drop last cell if failed, to avoid keep failed in further execution
-                self._instance_dict[instance_id]["cells"].pop(-1)
+                self._instance_dict[instance_id]["cells"] = self._instance_dict[instance_id]["cells"][:-1]
                 if execution_status == "TimeLimitExceeded":
                     ret_str = f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, timeout: {payload['run_timeout']}"
                     if response_json["run_result"]["stdout"] is not None and len(response_json["run_result"]["stdout"]) > 0:
