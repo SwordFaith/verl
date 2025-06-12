@@ -739,16 +739,18 @@ class SGLangRollout(BaseRollout):
                 if _req.messages[-1].tool_calls is not None:
                     parsed_tool_calls = _req.messages[-1].tool_calls
                     is_tool_call_overlong = False
+                    tool_call_responses = []
                     tool_call_results = []
                     for tool_call in parsed_tool_calls:
                         tool_call_results.append(
-                            self._tool_map[tool_call.function.name].execute(
+                            await self._tool_map[tool_call.function.name].execute(
                                 _req.request_id,
                                 tool_call.function.arguments,
                                 **_req.tools_kwargs[tool_call.function.name].get("execute_kwargs", {}),
                             )
                         )
-                        if _req.check_if_tool_response_messages_overlong(self.tokenizer, tool_call_results):
+                        tool_call_responses.append(tool_call_results[-1][0])
+                        if _req.check_if_tool_response_messages_overlong(self.tokenizer, tool_call_responses):
                             is_tool_call_overlong = True
                             break
                     _req.add_tool_response_messages(self.tokenizer, [resp for resp, _, _ in tool_call_results])
