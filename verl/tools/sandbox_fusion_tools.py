@@ -346,12 +346,15 @@ class SandboxFusionTool(BaseTool):
                 return ret_str
             elif status == "Failed":
                 execution_status = response_json["run_result"]["status"]
+                # Drop last cell if failed, to avoid keep failed in further execution
+                self._instance_dict[instance_id]["cells"].pop(-1)
                 if execution_status == "TimeLimitExceeded":
                     ret_str = f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, timeout: {payload['run_timeout']}"
                     if response_json["run_result"]["stdout"] is not None and len(response_json["run_result"]["stdout"]) > 0:
                         ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
                     if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
                         ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
+                    return ret_str
                 elif execution_status == "Error":
                     ret_str = ""
                     if response_json["run_result"]["return_code"] is not None and response_json["run_result"]["return_code"] != 0:
@@ -360,6 +363,7 @@ class SandboxFusionTool(BaseTool):
                         ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
                     if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
                         ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
+                    return ret_str
                 else:
                     raise ValueError(f"Unknown execution status: {execution_status}\nresponse: {response.text}")
             elif status == "SandboxError":
