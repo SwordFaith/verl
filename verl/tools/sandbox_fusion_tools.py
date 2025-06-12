@@ -188,6 +188,7 @@ class SandboxFusionTool(BaseTool):
             code = str(code)
 
         # TODO: better documentation for the code
+        code = code.rstrip("\n ")
         if len(code) > 0:
             if self.mode in ["run_jupyter", "sim_jupyter"]:
                 self._instance_dict[instance_id]["cells"].append(code)
