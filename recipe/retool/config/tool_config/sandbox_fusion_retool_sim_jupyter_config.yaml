@@ -10,7 +10,7 @@ tools:
       type: "function"
       function:
         name: "code_interpreter"
-        description: "Execute Python code to perform calculations, data analysis, or other computational tasks with ipykernel."
+        description: "Execute Python code to perform calculations, data analysis, or other computational tasks with ipykernel, which means before execution print also returns in new tool response."
         parameters:
           type: "object"
           properties:
