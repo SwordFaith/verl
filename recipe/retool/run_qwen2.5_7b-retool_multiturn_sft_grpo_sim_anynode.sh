@@ -115,7 +115,7 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.rollout.name=sglang_async \
         actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
         actor_rollout_ref.rollout.n=${n_resp_per_prompt} \
-        actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/recipe/retool/config/tool_config/sandbox_fusion_retool_config.yaml" \
+        actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/recipe/retool/config/tool_config/sandbox_fusion_retool_sim_jupyter_config.yaml" \
         actor_rollout_ref.ref.fsdp_config.param_offload=${OFFLOAD} \
         algorithm.use_kl_in_reward=False \
         trainer.critic_warmup=0 \
