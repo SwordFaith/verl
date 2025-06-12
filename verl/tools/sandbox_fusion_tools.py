@@ -344,6 +344,15 @@ class SandboxFusionTool(BaseTool):
                 if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
                     ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
                 return ret_str
+            elif status == "Finished":
+                ret_str = ""
+                if response_json["run_result"]["return_code"] is not None and response_json["run_result"]["return_code"] != 0:
+                    ret_str += f"return_code: {response_json['run_result']['return_code']}\n"
+                if response_json["run_result"]["stdout"] is not None and len(response_json["run_result"]["stdout"]) > 0:
+                    ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
+                if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
+                    ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
+                return ret_str
             elif status == "Failed":
                 execution_status = response_json["run_result"]["status"]
                 # Drop last cell if failed, to avoid keep failed in further execution
