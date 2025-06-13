@@ -1248,9 +1248,6 @@ class SGLangRollout(BaseRollout):
                     use_inference_chat_template=self.config.multi_turn.use_inference_chat_template,
                     enable_tokenization_sanity_check=self.config.multi_turn.enable_tokenization_sanity_check,
                     tokenizer=self.tokenizer,
-                    generation_prompt_ids=_input_ids,
-                    base_conv_wo_gen_prompt_end_pos=len(_input_ids),
-                    base_conv_with_gen_prompt_end_pos=len(_input_ids)
                 )
 
                 error_message = f"Request {req.request_id} has mismatched lengths: input_ids={len(req.input_ids)}, attention_mask={len(req.attention_mask)}, position_ids={len(req.position_ids)}, loss_mask={len(req.loss_mask)}"

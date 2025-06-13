@@ -2,15 +2,24 @@ tools:
   - class_name: "verl.tools.sandbox_fusion_tools.SandboxFusionTool"
     config:
       sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co 
-      num_workers: 4096
-      rate_limit: 4096
+      num_workers: 8192
+      rate_limit: 8192
       mode: "run_code"  # run_code, run_jupyter, sim_jupyter
-      default_timeout: 6
+      default_timeout: 3
     tool_schema:
       type: "function"
       function:
         name: "code_interpreter"
-        description: "Execute Python code to perform calculations, data analysis, or other computational tasks. Use the `print()` function to output results. The execution will return the printed output. If nothing is printed, an empty string will be returned. Note that you should not assume previous code will be executed in the same ipykernel session."
+        description: |
+          A Python code execution environment that allows you to:
+          - Run Python code for calculations, data analysis, and other computational tasks
+          - Get results through the `print()` function output
+          - Execute code in an isolated environment (each execution starts fresh)
+          
+          Important notes:
+          - Results are captured from `print()` statements
+          - Returns empty string if no output is printed
+          - Each execution is independent (no state persistence between runs)
         parameters:
           type: "object"
           properties:
