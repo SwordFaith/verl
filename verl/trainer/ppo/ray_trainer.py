@@ -957,25 +957,45 @@ class RayPPOTrainer:
                             else:
                                 per_request_metrics_list = per_request_tool_metrics
                             
-                            # Aggregate shared metrics across all requests
-                            batch_shared_metrics = self._aggregate_shared_tool_metrics(per_request_metrics_list)
+                            # Aggregate shared and tool-specific metrics across all requests
+                            aggregated_tool_metrics = self._aggregate_tool_metrics_detailed(per_request_metrics_list)
                             
-                            # Add aggregated tool metrics with tools/ prefix
-                            for key, value in batch_shared_metrics.items():
-                                metrics[f"tools/{key}"] = value
+                            # Add shared tool metrics with tools/ prefix (remove batch_ prefix)
+                            for key, value in aggregated_tool_metrics["shared_metrics"].items():
+                                clean_key = key.replace("batch_", "")
+                                metrics[f"tools/{clean_key}"] = value
+                            
+                            # Add tool-specific metrics with tools/{tool_name}/ prefix  
+                            for tool_name, tool_stats in aggregated_tool_metrics["tool_specific_metrics"].items():
+                                for key, value in tool_stats.items():
+                                    if key != "specific_metrics":  # Skip nested specific_metrics dict
+                                        metrics[f"tools/{tool_name}/{key}"] = value
+                                    else:
+                                        # Add specific metrics for this tool
+                                        for specific_key, specific_value in value.items():
+                                            metrics[f"tools/{tool_name}/{specific_key}"] = specific_value
                         
-                        # Extract conversation turn statistics from rollout output
+                        # Extract and aggregate conversation turn statistics from rollout output
                         if "turn_stats" in gen_batch_output.non_tensor_batch:
-                            turn_stats = gen_batch_output.non_tensor_batch["turn_stats"]
-                            if isinstance(turn_stats, dict):
-                                # Add turn statistics with conversation/ prefix
-                                for role, role_stats in turn_stats.get("by_role", {}).items():
-                                    for key, value in role_stats.items():
-                                        metrics[f"conversation/{role}/{key}"] = value
-                                # Add overall conversation stats
-                                for key in ["total_turns", "conversation_length_tokens", "conversation_length_chars"]:
-                                    if key in turn_stats:
-                                        metrics[f"conversation/{key}"] = turn_stats[key]
+                            per_request_turn_stats = gen_batch_output.non_tensor_batch["turn_stats"]
+                            
+                            # Aggregate turn stats across all requests
+                            if isinstance(per_request_turn_stats, np.ndarray):
+                                turn_stats_list = per_request_turn_stats.tolist()
+                            else:
+                                turn_stats_list = per_request_turn_stats
+                            
+                            aggregated_turn_stats = self._aggregate_turn_stats(turn_stats_list)
+                            
+                            # Add turn statistics with conversation/ prefix
+                            for role, role_stats in aggregated_turn_stats.get("by_role", {}).items():
+                                for key, value in role_stats.items():
+                                    metrics[f"conversations/{role}/{key}"] = value
+                            
+                            # Add overall conversation stats
+                            for key in ["total_turns", "conversation_length_tokens", "conversation_length_chars"]:
+                                if key in aggregated_turn_stats:
+                                    metrics[f"conversations/{key}"] = aggregated_turn_stats[key]
                         
                         gen_batch_output.meta_info.pop("timing", None)
 
@@ -1174,18 +1194,20 @@ class RayPPOTrainer:
                     progress_bar.close()
                     return
 
-    def _aggregate_shared_tool_metrics(self, per_request_metrics_list):
-        """Aggregate shared tool metrics from all requests in the batch.
+    def _aggregate_tool_metrics_detailed(self, per_request_metrics_list):
+        """Aggregate tool metrics from all requests in the batch with detailed breakdown.
         
         Args:
             per_request_metrics_list: List of dictionaries containing tool metrics from each request
             Each request metric dict has the structure returned by AsyncRolloutRequest.get_aggregated_tool_metrics()
             
         Returns:
-            Dict containing aggregated shared tool metrics for the batch
+            Dict containing:
+            - shared_metrics: Aggregated shared tool metrics for the batch
+            - tool_specific_metrics: Per-tool aggregated metrics
         """
         if not per_request_metrics_list:
-            return {}
+            return {"shared_metrics": {}, "tool_specific_metrics": {}}
         
         # Initialize batch-level shared metrics
         batch_shared_metrics = {
@@ -1203,6 +1225,8 @@ class RayPPOTrainer:
             "batch_unique_tools_used": set(),
         }
         
+        # Initialize tool-specific aggregation
+        tool_specific_aggregated = {}
         total_success_rates = []
         
         for request_metrics in per_request_metrics_list:
@@ -1210,8 +1234,9 @@ class RayPPOTrainer:
                 continue
                 
             shared_metrics = request_metrics.get("shared_metrics", {})
+            tool_specific_metrics = request_metrics.get("tool_specific_metrics", {})
             
-            # Count requests with tool usage
+            # Aggregate shared metrics
             if shared_metrics.get("tool_invocation_count", 0) > 0:
                 batch_shared_metrics["batch_requests_with_tools"] += 1
                 
@@ -1240,6 +1265,43 @@ class RayPPOTrainer:
                     batch_shared_metrics["batch_unique_tools_used"].update(tools_used)
                 elif isinstance(tools_used, set):
                     batch_shared_metrics["batch_unique_tools_used"].update(tools_used)
+            
+            # Aggregate tool-specific metrics
+            for tool_name, tool_metrics in tool_specific_metrics.items():
+                if tool_name not in tool_specific_aggregated:
+                    tool_specific_aggregated[tool_name] = {
+                        "invocation_count": 0,
+                        "success_count": 0,
+                        "success_rate": 0.0,
+                        "total_latency_ms": 0.0,
+                        "avg_latency_ms": 0.0,
+                        "min_latency_ms": float('inf'),
+                        "max_latency_ms": 0.0,
+                        "specific_metrics": {}
+                    }
+                
+                # Aggregate basic tool metrics
+                tool_agg = tool_specific_aggregated[tool_name]
+                tool_agg["invocation_count"] += tool_metrics.get("invocation_count", 0)
+                tool_agg["success_count"] += tool_metrics.get("success_count", 0)
+                tool_agg["total_latency_ms"] += tool_metrics.get("total_latency_ms", 0.0)
+                
+                # Update min/max latencies for this tool
+                tool_min = tool_metrics.get("avg_latency_ms", 0.0)  # Use avg as proxy for min/max if available
+                tool_max = tool_metrics.get("avg_latency_ms", 0.0)
+                if tool_min > 0 and tool_min < tool_agg["min_latency_ms"]:
+                    tool_agg["min_latency_ms"] = tool_min
+                if tool_max > tool_agg["max_latency_ms"]:
+                    tool_agg["max_latency_ms"] = tool_max
+                
+                # Aggregate specific metrics for this tool
+                for metric_key, metric_value in tool_metrics.get("specific_metrics", {}).items():
+                    if metric_key not in tool_agg["specific_metrics"]:
+                        tool_agg["specific_metrics"][metric_key] = metric_value
+                    elif isinstance(metric_value, (int, float)):
+                        # Sum numeric values
+                        if isinstance(tool_agg["specific_metrics"][metric_key], (int, float)):
+                            tool_agg["specific_metrics"][metric_key] += metric_value
         
         # Calculate batch-level averages
         batch_size = len(per_request_metrics_list)
@@ -1260,4 +1322,108 @@ class RayPPOTrainer:
         # Convert set to list for JSON serialization
         batch_shared_metrics["batch_unique_tools_used"] = list(batch_shared_metrics["batch_unique_tools_used"])
         
-        return batch_shared_metrics
+        # Calculate tool-specific averages
+        for tool_name, tool_metrics in tool_specific_aggregated.items():
+            if tool_metrics["invocation_count"] > 0:
+                tool_metrics["success_rate"] = tool_metrics["success_count"] / tool_metrics["invocation_count"]
+                tool_metrics["avg_latency_ms"] = tool_metrics["total_latency_ms"] / tool_metrics["invocation_count"]
+            
+            # Handle edge cases for tool-specific metrics
+            if tool_metrics["min_latency_ms"] == float('inf'):
+                tool_metrics["min_latency_ms"] = 0.0
+        
+        return {
+            "shared_metrics": batch_shared_metrics,
+            "tool_specific_metrics": tool_specific_aggregated
+        }
+
+    def _aggregate_turn_stats(self, per_request_turn_stats_list):
+        """Aggregate conversation turn statistics from all requests in the batch.
+        
+        Args:
+            per_request_turn_stats_list: List[List[Dict]] - Each element is a list of turn stats for one request
+            
+        Returns:
+            Dict containing aggregated turn statistics for the batch
+        """
+        if not per_request_turn_stats_list:
+            return {}
+        
+        # 按 role 分组统计
+        stats_by_role = {}
+        total_turns = 0
+        total_tokens = 0
+        total_chars = 0
+        
+        for req_turn_stats in per_request_turn_stats_list:
+            for turn_stat in req_turn_stats:
+                role = turn_stat.get("role", "unknown")
+                total_turns += 1
+                total_tokens += turn_stat.get("token_count", 0)
+                total_chars += turn_stat.get("char_count", 0)
+                
+                if role not in stats_by_role:
+                    stats_by_role[role] = {
+                        "turn_count": 0,
+                        "total_tokens": 0,
+                        "total_chars": 0,
+                        "avg_tokens_per_turn": 0.0,
+                        "avg_chars_per_turn": 0.0,
+                        "min_tokens_per_turn": float('inf'),
+                        "max_tokens_per_turn": 0,
+                        "min_chars_per_turn": float('inf'),
+                        "max_chars_per_turn": 0
+                    }
+                
+                role_stats = stats_by_role[role]
+                role_stats["turn_count"] += 1
+                role_stats["total_tokens"] += turn_stat.get("token_count", 0)
+                role_stats["total_chars"] += turn_stat.get("char_count", 0)
+                
+                # Update min/max for tokens and chars
+                token_count = turn_stat.get("token_count", 0)
+                char_count = turn_stat.get("char_count", 0)
+                
+                if token_count > 0:
+                    role_stats["min_tokens_per_turn"] = min(role_stats["min_tokens_per_turn"], token_count)
+                    role_stats["max_tokens_per_turn"] = max(role_stats["max_tokens_per_turn"], token_count)
+                
+                if char_count > 0:
+                    role_stats["min_chars_per_turn"] = min(role_stats["min_chars_per_turn"], char_count)
+                    role_stats["max_chars_per_turn"] = max(role_stats["max_chars_per_turn"], char_count)
+                
+                # 特殊统计：assistant 的工具调用相关
+                if role == "assistant":
+                    if "turns_with_tool_calls" not in role_stats:
+                        role_stats["turns_with_tool_calls"] = 0
+                        role_stats["total_tool_calls"] = 0
+                    
+                    if turn_stat.get("has_tool_calls", False):
+                        role_stats["turns_with_tool_calls"] += 1
+                        role_stats["total_tool_calls"] += turn_stat.get("tool_calls_count", 0)
+                
+                # 特殊统计：tool 的工具数量相关
+                elif role == "tool":
+                    if "total_tool_responses" not in role_stats:
+                        role_stats["total_tool_responses"] = 0
+                    
+                    role_stats["total_tool_responses"] += turn_stat.get("tool_count", 0)
+        
+        # 计算平均值和处理边界情况
+        for role, stats in stats_by_role.items():
+            if stats["turn_count"] > 0:
+                stats["avg_tokens_per_turn"] = stats["total_tokens"] / stats["turn_count"]
+                stats["avg_chars_per_turn"] = stats["total_chars"] / stats["turn_count"]
+            
+            # Handle edge cases for min values
+            if stats["min_tokens_per_turn"] == float('inf'):
+                stats["min_tokens_per_turn"] = 0
+            if stats["min_chars_per_turn"] == float('inf'):
+                stats["min_chars_per_turn"] = 0
+        
+        return {
+            "by_role": stats_by_role,
+            "total_turns": total_turns,
+            "conversation_length_tokens": total_tokens,
+            "conversation_length_chars": total_chars
+        }
