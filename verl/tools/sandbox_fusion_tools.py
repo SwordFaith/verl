@@ -180,7 +180,7 @@ class SandboxFusionTool(BaseTool):
         }
         return instance_id
 
-    async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, dict]:
+    async def _execute_impl(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, bool, dict[str, Any]]:
         code = parameters.get("code", "")
         timeout = parameters.get("timeout", self.default_timeout)
         language = parameters.get("language", self.default_language)
@@ -194,7 +194,7 @@ class SandboxFusionTool(BaseTool):
                 self._instance_dict[instance_id]["cells"].append(code)
         else:
             logger.error(f"no code parsed, instance_id: {instance_id}, parameters: {parameters}")
-            return "no code parsed", 0.0, {}
+            return "no code parsed", 0.0
 
         if self.mode == "run_jupyter":
             result = await self.execution_pool.execute.remote(self.get_jupyter_mode_result, instance_id, timeout)
@@ -205,7 +205,18 @@ class SandboxFusionTool(BaseTool):
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
 
-        return result, 0.0, {}
+        # Tool-specific metrics
+        specific_metrics = {
+            "code_length": len(code),
+            "execution_mode": self.mode,
+            "language": language if "language" in locals() else "python",
+            "timeout_used": timeout if "timeout" in locals() else 30
+        }
+        
+        # Determine success based on result content
+        success = result is not None and len(str(result).strip()) > 0
+        
+        return result, 0.0, success, specific_metrics
 
     def execute_code(self, instance_id, code, timeout=30, language="python"):
         result_status, metadata = _process_single_case(0, None, None, self.sandbox_fusion_url, code, timeout, language)

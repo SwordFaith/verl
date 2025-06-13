@@ -753,7 +753,16 @@ class SGLangRollout(BaseRollout):
                         if _req.check_if_tool_response_messages_overlong(self.tokenizer, tool_call_responses):
                             is_tool_call_overlong = True
                             break
-                    _req.add_tool_response_messages(self.tokenizer, [resp for resp, _, _ in tool_call_results])
+                    # 添加工具响应消息并收集 turn stats
+                    tool_responses = [resp for resp, _, _ in tool_call_results]
+                    turn_stats = _req.add_tool_response_messages(self.tokenizer, tool_responses)
+                    _req.turn_stats_list.append({
+                        "turn_index": len(_req.messages) - 1,
+                        "timestamp": time.time(),
+                        **turn_stats
+                    })
+                    
+                    # 更新工具指标
                     for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
                         _req.update_metrics(metrics, tool_call.function.name)
                     if is_tool_call_overlong or len(_req.input_ids) >= self.config.max_model_len:
@@ -773,7 +782,12 @@ class SGLangRollout(BaseRollout):
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
                 current_turns += 1
                 if finish_reason_type == FinishReasonTypeEnum.LENGTH:
-                    _req.add_assistant_message(self.tokenizer, content)
+                    turn_stats = _req.add_assistant_message(self.tokenizer, content)
+                    _req.turn_stats_list.append({
+                        "turn_index": len(_req.messages) - 1,
+                        "timestamp": time.time(),
+                        **turn_stats
+                    })
                     break
                 else:
                     if self._function_call_parser and self._function_call_parser.has_tool_call(content):
@@ -805,14 +819,29 @@ class SGLangRollout(BaseRollout):
                                 )
                             )
                         if len(parsed_tool_calls) > 0:
-                            _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
+                            turn_stats = _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
+                            _req.turn_stats_list.append({
+                                "turn_index": len(_req.messages) - 1,
+                                "timestamp": time.time(),
+                                **turn_stats
+                            })
                         else:
-                            _req.add_assistant_message(self.tokenizer, content)
+                            turn_stats = _req.add_assistant_message(self.tokenizer, content)
+                            _req.turn_stats_list.append({
+                                "turn_index": len(_req.messages) - 1,
+                                "timestamp": time.time(),
+                                **turn_stats
+                            })
                             finish_reason_type = FinishReasonTypeEnum.STOP
                             _req.state = AsyncRolloutRequestStateEnum.COMPLETED
                             break
                     else:
-                        _req.add_assistant_message(self.tokenizer, content)
+                        turn_stats = _req.add_assistant_message(self.tokenizer, content)
+                        _req.turn_stats_list.append({
+                            "turn_index": len(_req.messages) - 1,
+                            "timestamp": time.time(),
+                            **turn_stats
+                        })
                         break
 
         if current_turns >= self.config.multi_turn.max_turns:
@@ -1016,6 +1045,19 @@ class SGLangRollout(BaseRollout):
             batch_size=len(sorted_output_req_list),
         )
 
+        # Aggregate tool metrics across all requests
+        all_tool_metrics = []
+        all_turn_stats = []
+        for req in sorted_output_req_list:
+            tool_metrics = req.get_aggregated_tool_metrics()
+            all_tool_metrics.append(tool_metrics)
+            # 收集 turn stats
+            turn_stats = getattr(req, 'turn_stats_list', [])
+            all_turn_stats.append(turn_stats)
+        
+        batch_tool_metrics = self._aggregate_batch_tool_metrics(all_tool_metrics)
+        batch_turn_stats = self._aggregate_batch_turn_stats(all_turn_stats)
+        
         # free cache engine
         if self.config.free_cache_engine and self._engine is not None and self._tp_rank == 0:
             loop = asyncio.get_event_loop()
@@ -1026,8 +1068,148 @@ class SGLangRollout(BaseRollout):
             non_tensor_batch={
                 "messages": np.array(messages),
                 "reward_scores": np.array(reward_scores),
-            },
+                "turn_stats": all_turn_stats,  # List[List[Dict]] - 保留 request 边界
+                "tool_metrics": batch_tool_metrics  # 工具指标也放到 non_tensor_batch
+            }
         )
+    
+    def _aggregate_batch_tool_metrics(self, all_tool_metrics: list) -> dict:
+        """Aggregate tool metrics across all requests in the batch.
+        
+        Args:
+            all_tool_metrics: List of tool metrics from each request
+            
+        Returns:
+            Dict containing aggregated tool metrics for the batch
+        """
+        if not all_tool_metrics:
+            return {}
+        
+        # Initialize aggregated metrics
+        aggregated = {
+            "batch_tool_invocation_count_total": 0,
+            "batch_tool_invocation_count_avg": 0.0,
+            "batch_tool_response_length_total": 0,
+            "batch_tool_response_length_avg": 0.0,
+            "batch_tool_latency_ms_total": 0.0,
+            "batch_tool_latency_ms_min": float('inf'),
+            "batch_tool_latency_ms_max": 0.0,
+            "batch_tool_latency_ms_avg": 0.0,
+            "batch_tool_success_count_total": 0,
+            "batch_tool_success_rate_avg": 0.0,
+            "batch_requests_with_tools": 0,
+            "batch_unique_tools_used": set(),
+        }
+        
+        total_success_rates = []
+        
+        for metrics in all_tool_metrics:
+            if metrics.get("tool_invocation_count", 0) > 0:
+                aggregated["batch_requests_with_tools"] += 1
+                aggregated["batch_tool_invocation_count_total"] += metrics["tool_invocation_count"]
+                aggregated["batch_tool_response_length_total"] += metrics["tool_response_length_total"]
+                aggregated["batch_tool_latency_ms_total"] += metrics["tool_latency_ms_total"]
+                aggregated["batch_tool_success_count_total"] += metrics["tool_success_count"]
+                
+                total_success_rates.append(metrics["tool_success_rate"])
+                
+                # Update min/max latencies
+                if metrics["tool_latency_ms_min"] < aggregated["batch_tool_latency_ms_min"]:
+                    aggregated["batch_tool_latency_ms_min"] = metrics["tool_latency_ms_min"]
+                if metrics["tool_latency_ms_max"] > aggregated["batch_tool_latency_ms_max"]:
+                    aggregated["batch_tool_latency_ms_max"] = metrics["tool_latency_ms_max"]
+                
+                # Collect unique tools
+                aggregated["batch_unique_tools_used"].update(metrics["tools_used"])
+        
+        # Calculate averages
+        batch_size = len(all_tool_metrics)
+        if batch_size > 0:
+            aggregated["batch_tool_invocation_count_avg"] = aggregated["batch_tool_invocation_count_total"] / batch_size
+            aggregated["batch_tool_response_length_avg"] = aggregated["batch_tool_response_length_total"] / batch_size
+        
+        if aggregated["batch_tool_invocation_count_total"] > 0:
+            aggregated["batch_tool_latency_ms_avg"] = aggregated["batch_tool_latency_ms_total"] / aggregated["batch_tool_invocation_count_total"]
+        
+        if total_success_rates:
+            aggregated["batch_tool_success_rate_avg"] = sum(total_success_rates) / len(total_success_rates)
+        
+        # Handle edge cases
+        if aggregated["batch_tool_latency_ms_min"] == float('inf'):
+            aggregated["batch_tool_latency_ms_min"] = 0.0
+        
+        # Convert set to list for JSON serialization
+        aggregated["batch_unique_tools_used"] = list(aggregated["batch_unique_tools_used"])
+        
+        return aggregated
+    
+    def _aggregate_batch_turn_stats(self, all_turn_stats: list) -> dict:
+        """聚合批次中所有请求的 turn 统计信息。
+        
+        Args:
+            all_turn_stats: List[List[Dict]] - 每个请求的 turn stats 列表
+            
+        Returns:
+            Dict containing aggregated turn statistics for the batch
+        """
+        if not all_turn_stats:
+            return {}
+        
+        # 按 role 分组统计
+        stats_by_role = {}
+        total_turns = 0
+        total_tokens = 0
+        total_chars = 0
+        
+        for req_turn_stats in all_turn_stats:
+            for turn_stat in req_turn_stats:
+                role = turn_stat.get("role", "unknown")
+                total_turns += 1
+                total_tokens += turn_stat.get("token_count", 0)
+                total_chars += turn_stat.get("char_count", 0)
+                
+                if role not in stats_by_role:
+                    stats_by_role[role] = {
+                        "turn_count": 0,
+                        "total_tokens": 0,
+                        "total_chars": 0,
+                        "avg_tokens_per_turn": 0.0,
+                        "avg_chars_per_turn": 0.0
+                    }
+                
+                stats_by_role[role]["turn_count"] += 1
+                stats_by_role[role]["total_tokens"] += turn_stat.get("token_count", 0)
+                stats_by_role[role]["total_chars"] += turn_stat.get("char_count", 0)
+                
+                # 特殊统计：assistant 的工具调用相关
+                if role == "assistant":
+                    if "turns_with_tool_calls" not in stats_by_role[role]:
+                        stats_by_role[role]["turns_with_tool_calls"] = 0
+                        stats_by_role[role]["total_tool_calls"] = 0
+                    
+                    if turn_stat.get("has_tool_calls", False):
+                        stats_by_role[role]["turns_with_tool_calls"] += 1
+                        stats_by_role[role]["total_tool_calls"] += turn_stat.get("tool_calls_count", 0)
+                
+                # 特殊统计：tool 的工具数量相关
+                elif role == "tool":
+                    if "total_tool_responses" not in stats_by_role[role]:
+                        stats_by_role[role]["total_tool_responses"] = 0
+                    
+                    stats_by_role[role]["total_tool_responses"] += turn_stat.get("tool_count", 0)
+        
+        # 计算平均值
+        for role, stats in stats_by_role.items():
+            if stats["turn_count"] > 0:
+                stats["avg_tokens_per_turn"] = stats["total_tokens"] / stats["turn_count"]
+                stats["avg_chars_per_turn"] = stats["total_chars"] / stats["turn_count"]
+        
+        return {
+            "by_role": stats_by_role,
+            "total_turns": total_turns,
+            "conversation_length_tokens": total_tokens,
+            "conversation_length_chars": total_chars
+        }
 
     def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto, n: int) -> list[AsyncRolloutRequest]:
         assert "raw_prompt" in prompts.non_tensor_batch, "need data.return_raw_chat=True, due to no official way do parse_messages"
@@ -1066,6 +1248,9 @@ class SGLangRollout(BaseRollout):
                     use_inference_chat_template=self.config.multi_turn.use_inference_chat_template,
                     enable_tokenization_sanity_check=self.config.multi_turn.enable_tokenization_sanity_check,
                     tokenizer=self.tokenizer,
+                    generation_prompt_ids=_input_ids,
+                    base_conv_wo_gen_prompt_end_pos=len(_input_ids),
+                    base_conv_with_gen_prompt_end_pos=len(_input_ids)
                 )
 
                 error_message = f"Request {req.request_id} has mismatched lengths: input_ids={len(req.input_ids)}, attention_mask={len(req.attention_mask)}, position_ids={len(req.position_ids)}, loss_mask={len(req.loss_mask)}"
@@ -1104,6 +1289,14 @@ class SGLangRollout(BaseRollout):
             reward_scores={},
             max_response_len=self.config.response_length,
             max_model_len=min(self.config.max_model_len, self.config.prompt_length + self.config.response_length),
+            max_prompt_len=self.config.prompt_length,
+            use_inference_chat_template=self.config.multi_turn.use_inference_chat_template,
+            enable_tokenization_sanity_check=self.config.multi_turn.enable_tokenization_sanity_check,
+            generation_prompt_ids=_input_ids,
+            base_conv_wo_gen_prompt_end_pos=len(_input_ids),
+            base_conv_with_gen_prompt_end_pos=len(_input_ids),
+            turn_stats={},
+            token_stats={}
         )
 
         # json_request already contains sampling_params

@@ -73,7 +73,7 @@ class Gsm8kTool(BaseTool):
         }
         return instance_id
 
-    async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, dict]:
+    async def _execute_impl(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, bool, dict[str, Any]]:
         answer = parameters.get("answer", "")
         if not isinstance(answer, str):
             answer = str(answer)
@@ -89,7 +89,16 @@ class Gsm8kTool(BaseTool):
         # update the reward
         self._instance_dict[instance_id]["reward"] = reward
 
-        return f"Current parsed {answer=} {reward=}", tool_reward, {}
+        # Tool-specific metrics
+        specific_metrics = {
+            "parsed_answer": answer,
+            "ground_truth": self._instance_dict[instance_id]["ground_truth"],
+            "answer_improvement": reward > self._instance_dict[instance_id]["reward"],
+            "current_reward": reward
+        }
+        
+        success = reward > 0  # Consider successful if reward is positive
+        return f"Current parsed {answer=} {reward=}", tool_reward, success, specific_metrics
 
     async def calc_reward(self, instance_id: str, **kwargs) -> float:
         return gsm8k.compute_score(

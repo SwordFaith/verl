@@ -15,7 +15,8 @@
 import importlib
 import json
 import sys
-from typing import Any, List, Optional, Tuple
+import time
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from omegaconf import OmegaConf
@@ -59,7 +60,7 @@ class BaseTool:
         else:
             return instance_id
 
-    async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, dict]:
+    async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, Dict[str, Any]]:
         """Execute the tool.
 
         Args:
@@ -71,7 +72,40 @@ class BaseTool:
             tool_reward_score: The step reward score of the tool.
             tool_metrics: The metrics of the tool.
         """
-        return "Updated the tool state.", 0.0, {}
+        start_time = time.time()
+        response, reward, success, specific_metrics = await self._execute_impl(instance_id, parameters, **kwargs)
+        end_time = time.time()
+        
+        # Collect base tool metrics
+        base_metrics = {
+            "latency_ms": (end_time - start_time) * 1000,
+            "response_char_length": len(response) if response else 0,
+            "success": success,
+            "tool_name": self.name,
+        }
+        
+        # Combine base metrics with tool-specific metrics
+        combined_metrics = {
+            "base_metrics": base_metrics,
+            "specific_metrics": specific_metrics or {}
+        }
+        
+        return response, reward, combined_metrics
+    
+    async def _execute_impl(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, bool, Dict[str, Any]]:
+        """Implementation method for tool execution. Override this in subclasses.
+        
+        Args:
+            instance_id: The instance id of the tool.
+            parameters: The parameters of the tool.
+            
+        Returns:
+            tool_response: The response str of the tool.
+            tool_reward_score: The step reward score of the tool.
+            success: Whether the execution was successful.
+            specific_metrics: Tool-specific metrics dictionary.
+        """
+        return "Updated the tool state.", 0.0, True, {}
 
     async def calc_reward(self, instance_id: str, **kwargs) -> float:
         """Calculate the reward of the tool.

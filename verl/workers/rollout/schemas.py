@@ -99,6 +99,8 @@ class AsyncRolloutRequest(BaseModel):
     base_conv_wo_gen_prompt_end_pos: int
     base_conv_with_gen_prompt_end_pos: int
 
+    turn_stats: Dict[str, Any] = {}
+
     @model_validator(mode="before")
     @classmethod
     def initialize_request(cls, values):
@@ -156,19 +158,39 @@ class AsyncRolloutRequest(BaseModel):
         tokenizer: PreTrainedTokenizer,
         content: str,
         tool_calls: Optional[List[OpenAIFunctionToolCall]] = None,
-    ) -> None:
+    ) -> Dict[str, Any]:
         self.messages.append(Message(role="assistant", content=content, tool_calls=tool_calls))
-        content = tokenizer.apply_chat_template([*BASE_CHAT_HISTORY, self.messages[-1]], tools=([tool.model_dump() for tool in self.tool_schemas] if self.tool_schemas else None), add_generation_prompt=False, tokenize=False)
-        content_ids = tokenizer.encode(content[self.base_conv_with_gen_prompt_end_pos :], add_special_tokens=False)
+        full_content = tokenizer.apply_chat_template([*BASE_CHAT_HISTORY, self.messages[-1]], tools=([tool.model_dump() for tool in self.tool_schemas] if self.tool_schemas else None), add_generation_prompt=False, tokenize=False)
+        content_ids = tokenizer.encode(full_content[self.base_conv_with_gen_prompt_end_pos :], add_special_tokens=False)
         self._update_input_ids(content_ids, attention_mask=True, loss_mask=True)
+        
+        # 返回该轮次的统计信息
+        return {
+            "role": "assistant",
+            "token_count": len(content_ids),
+            "char_count": len(content),
+            "has_tool_calls": tool_calls is not None,
+            "tool_calls_count": len(tool_calls) if tool_calls else 0
+        }
 
-    def add_tool_response_messages(self, tokenizer: PreTrainedTokenizer, contents: list[str]) -> None:
+    def add_tool_response_messages(self, tokenizer: PreTrainedTokenizer, contents: list[str]) -> Dict[str, Any]:
         if not contents:
-            return
+            return {"role": "tool", "token_count": 0, "char_count": 0, "tool_count": 0}
+        
         self.messages.extend([Message(role="tool", content=content) for content in contents])
-        content = tokenizer.apply_chat_template([*BASE_CHAT_HISTORY, *self.messages[-len(contents) :]], tools=([tool.model_dump() for tool in self.tool_schemas] if self.tool_schemas else None), add_generation_prompt=False, tokenize=False)
-        content_ids = tokenizer.encode(content[self.base_conv_wo_gen_prompt_end_pos :], add_special_tokens=False)
+        full_content = tokenizer.apply_chat_template([*BASE_CHAT_HISTORY, *self.messages[-len(contents) :]], tools=([tool.model_dump() for tool in self.tool_schemas] if self.tool_schemas else None), add_generation_prompt=False, tokenize=False)
+        content_ids = tokenizer.encode(full_content[self.base_conv_wo_gen_prompt_end_pos :], add_special_tokens=False)
         self._update_input_ids(content_ids, attention_mask=True, loss_mask=False)
+        
+        # 计算统计信息
+        total_chars = sum(len(content) for content in contents)
+        
+        return {
+            "role": "tool",
+            "token_count": len(content_ids),
+            "char_count": total_chars,
+            "tool_count": len(contents)
+        }
 
     def check_if_tool_response_messages_overlong(self, tokenizer: PreTrainedTokenizer, contents: list[str]) -> bool:
         if not contents:
@@ -184,6 +206,154 @@ class AsyncRolloutRequest(BaseModel):
         if self.metrics.get(tool_id) is None:
             self.metrics[tool_id] = []
         self.metrics[tool_id].append(metrics)
+    
+    def get_aggregated_tool_metrics(self) -> Dict[str, Any]:
+        """Get aggregated tool metrics for this request.
+        
+        This method processes the metrics collected during tool execution and aggregates them into:
+        1. Shared metrics: Common metrics across all tools (latency, success rate, etc.)
+        2. Tool-specific metrics: Metrics unique to each tool type
+        
+        Data structure in self.metrics:
+        {
+            "search": [metrics1, metrics2, ...],           # search tool execution records
+            "code_interpreter": [metrics3, metrics4, ...], # code tool execution records  
+            "turn_stats": [...],                           # conversation turn statistics
+            "token_stats": [...]                           # token usage statistics
+        }
+        
+        Returns:
+            Dict containing:
+            - shared_metrics: Aggregated metrics common to all tools
+            - tool_specific_metrics: Per-tool aggregated metrics with tool-specific data
+        """
+        # Shared metrics aggregated across all tool types
+        shared_metrics = {
+            "tool_invocation_count": 0,
+            "tool_response_char_length_total": 0,
+            "tool_response_char_length_avg": 0.0,
+            "tool_latency_ms_total": 0.0,
+            "tool_latency_ms_min": float('inf'),
+            "tool_latency_ms_max": 0.0,
+            "tool_latency_ms_avg": 0.0,
+            "tool_success_count": 0,
+            "tool_success_rate": 0.0,
+            "tools_used": set(),
+        }
+        
+        # Tool-specific metrics organized by tool name
+        tool_specific_metrics = {}
+        
+        total_calls = 0
+        total_char_length = 0
+        
+        # Filter out non-tool metric keys to get only actual tool names
+        # self.metrics contains both tool execution data (keyed by tool name) 
+        # and other metadata (turn_stats, token_stats)
+        tool_metrics_keys = [k for k in self.metrics.keys() if k not in ["turn_stats", "token_stats"]]
+        
+        for tool_id in tool_metrics_keys:
+            metrics_list = self.metrics[tool_id]
+            shared_metrics["tools_used"].add(tool_id)
+            
+            # Initialize tool-specific metrics for this tool
+            tool_specific_metrics[tool_id] = {
+                "invocation_count": 0,
+                "success_count": 0,
+                "success_rate": 0.0,
+                "total_latency_ms": 0.0,
+                "avg_latency_ms": 0.0,
+                "specific_metrics": {}  # Store tool-unique metrics
+            }
+            
+            for metrics in metrics_list:
+                if isinstance(metrics, dict):
+                    total_calls += 1
+                    tool_specific_metrics[tool_id]["invocation_count"] += 1
+                    
+                    # Extract base metrics and tool-specific metrics
+                    base_metrics = metrics.get("base_metrics", {})
+                    specific_metrics = metrics.get("specific_metrics", {})
+                    
+                    # Process base metrics for shared aggregation
+                    if "latency_ms" in base_metrics:
+                        latency = base_metrics["latency_ms"]
+                        shared_metrics["tool_latency_ms_total"] += latency
+                        shared_metrics["tool_latency_ms_min"] = min(shared_metrics["tool_latency_ms_min"], latency)
+                        shared_metrics["tool_latency_ms_max"] = max(shared_metrics["tool_latency_ms_max"], latency)
+                        tool_specific_metrics[tool_id]["total_latency_ms"] += latency
+                    
+                    if "response_char_length" in base_metrics:
+                        char_length = base_metrics["response_char_length"]
+                        total_char_length += char_length
+                    
+                    if "success" in base_metrics and base_metrics["success"]:
+                        shared_metrics["tool_success_count"] += 1
+                        tool_specific_metrics[tool_id]["success_count"] += 1
+                    
+                    # Aggregate tool-specific metrics
+                    for key, value in specific_metrics.items():
+                        if key not in tool_specific_metrics[tool_id]["specific_metrics"]:
+                            tool_specific_metrics[tool_id]["specific_metrics"][key] = []
+                        tool_specific_metrics[tool_id]["specific_metrics"][key].append(value)
+        
+        # Calculate shared metric averages
+        shared_metrics["tool_invocation_count"] = total_calls
+        shared_metrics["tool_response_char_length_total"] = total_char_length
+        
+        if total_calls > 0:
+            shared_metrics["tool_latency_ms_avg"] = shared_metrics["tool_latency_ms_total"] / total_calls
+            shared_metrics["tool_response_char_length_avg"] = total_char_length / total_calls
+            shared_metrics["tool_success_rate"] = shared_metrics["tool_success_count"] / total_calls
+        
+        # Handle edge case for min latency
+        if shared_metrics["tool_latency_ms_min"] == float('inf'):
+            shared_metrics["tool_latency_ms_min"] = 0.0
+        
+        # Calculate per-tool specific metric averages
+        for tool_id, tool_stats in tool_specific_metrics.items():
+            invocation_count = tool_stats["invocation_count"]
+            
+            if invocation_count > 0:
+                tool_stats["success_rate"] = tool_stats["success_count"] / invocation_count
+                tool_stats["avg_latency_ms"] = tool_stats["total_latency_ms"] / invocation_count
+            
+            # Aggregate tool-specific metrics
+            aggregated_specific = {}
+            for metric_name, values in tool_stats["specific_metrics"].items():
+                if not values:
+                    continue
+                    
+                # Apply different aggregation strategies based on value types
+                if all(isinstance(v, (int, float)) for v in values):
+                    # Numeric types: calculate mean, min, max, total
+                    aggregated_specific[f"{metric_name}_avg"] = sum(values) / len(values)
+                    aggregated_specific[f"{metric_name}_min"] = min(values)
+                    aggregated_specific[f"{metric_name}_max"] = max(values)
+                    aggregated_specific[f"{metric_name}_total"] = sum(values)
+                elif all(isinstance(v, bool) for v in values):
+                    # Boolean types: calculate true rate and count
+                    aggregated_specific[f"{metric_name}_rate"] = sum(values) / len(values)
+                    aggregated_specific[f"{metric_name}_count"] = sum(values)
+                elif all(isinstance(v, str) for v in values):
+                    # String types: calculate unique values
+                    unique_values = list(set(values))
+                    aggregated_specific[f"{metric_name}_unique_count"] = len(unique_values)
+                    if len(unique_values) <= 10:  # Avoid too many unique values
+                        aggregated_specific[f"{metric_name}_unique_values"] = unique_values
+                else:
+                    # Other types: keep sample values
+                    aggregated_specific[f"{metric_name}_samples"] = values[:5] if len(values) > 5 else values
+            
+            tool_stats["specific_metrics"] = aggregated_specific
+        
+        # Convert set to list for JSON serialization
+        shared_metrics["tools_used"] = list(shared_metrics["tools_used"])
+        
+        return {
+            "shared_metrics": shared_metrics,
+            "tool_specific_metrics": tool_specific_metrics
+        }
 
     def finalize(
         self,

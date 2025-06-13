@@ -213,7 +213,7 @@ class SearchTool(BaseTool):
         logger.debug(f"Search result for instance {instance_id}: {result_text}")
         return result_text, metadata
 
-    async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, dict]:
+    async def _execute_impl(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, bool, dict[str, Any]]:
         """Execute the search tool.
 
         Args:
@@ -231,7 +231,7 @@ class SearchTool(BaseTool):
         if not query_list_from_params or not isinstance(query_list_from_params, list):
             error_msg = "Error: 'query_list' is missing, empty, or not a list in parameters."
             logger.error(f"[SearchTool] {error_msg} Received parameters: {parameters}")
-            return json.dumps({"result": error_msg}), 0.0, {}
+            return json.dumps({"result": error_msg}), 0.0, False, {}
 
         # Execute search using Ray execution pool
         try:
@@ -243,12 +243,25 @@ class SearchTool(BaseTool):
             # Convert metadata to metrics
             metrics = {"query_count": metadata.get("query_count", 0), "status": metadata.get("status", "unknown"), "total_results": metadata.get("total_results", 0), "api_request_error": metadata.get("api_request_error")}
 
-            return result_text, 0.0, metrics
+            # Tool-specific metrics (convert from existing metrics)
+            specific_metrics = {
+                "query_count": metadata.get("query_count", 0),
+                "total_results": metadata.get("total_results", 0),
+                "api_status": metadata.get("status", "unknown"),
+                "queries": query_list_from_params
+            }
+            
+            # Determine success based on API status and results
+            success = (metadata.get("status") == "success" and 
+                      metadata.get("total_results", 0) > 0)
+            
+            return result_text, 0.0, success, specific_metrics
 
         except Exception as e:
             error_result = json.dumps({"result": f"Search execution failed: {e}"})
             logger.error(f"[SearchTool] Execution failed: {e}")
-            return error_result, 0.0, {"error": str(e)}
+            specific_metrics = {"error": str(e), "query_count": 0}
+            return error_result, 0.0, False, specific_metrics
 
     async def calc_reward(self, instance_id: str, **kwargs) -> str:
         return self._instance_dict[instance_id]["reward"]

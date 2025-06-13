@@ -946,6 +946,33 @@ class RayPPOTrainer:
                             gen_batch_output = self.async_rollout_manager.generate_sequences(gen_batch)
                             self.async_rollout_manager.sleep()
                         timing_raw.update(gen_batch_output.meta_info["timing"])
+                        
+                        # Extract tool metrics from rollout output
+                        if "tool_metrics" in gen_batch_output.non_tensor_batch:
+                            tool_metrics = gen_batch_output.non_tensor_batch["tool_metrics"]
+                            
+                            # Add shared tool metrics with tools/ prefix
+                            for key, value in tool_metrics.get("shared_metrics", {}).items():
+                                metrics[f"tools/{key}"] = value
+                            
+                            # Add tool-specific metrics with tools/{tool_name}/ prefix  
+                            for tool_name, tool_specific_data in tool_metrics.get("tool_specific_metrics", {}).items():
+                                for key, value in tool_specific_data.items():
+                                    metrics[f"tools/{tool_name}/{key}"] = value
+                        
+                        # Extract conversation turn statistics from rollout output
+                        if "turn_stats" in gen_batch_output.non_tensor_batch:
+                            turn_stats = gen_batch_output.non_tensor_batch["turn_stats"]
+                            if isinstance(turn_stats, dict):
+                                # Add turn statistics with conversation/ prefix
+                                for role, role_stats in turn_stats.get("by_role", {}).items():
+                                    for key, value in role_stats.items():
+                                        metrics[f"conversation/{role}/{key}"] = value
+                                # Add overall conversation stats
+                                for key in ["total_turns", "conversation_length_tokens", "conversation_length_chars"]:
+                                    if key in turn_stats:
+                                        metrics[f"conversation/{key}"] = turn_stats[key]
+                        
                         gen_batch_output.meta_info.pop("timing", None)
 
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
