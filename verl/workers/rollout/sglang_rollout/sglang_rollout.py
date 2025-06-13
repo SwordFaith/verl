@@ -1068,8 +1068,8 @@ class SGLangRollout(BaseRollout):
             non_tensor_batch={
                 "messages": np.array(messages, dtype=object),
                 "reward_scores": np.array(reward_scores, dtype=object),
-                "turn_stats": np.array(all_turn_stats, dtype=object),  # List[List[Dict]] - 保留 request 边界
-                "tool_metrics": np.array(batch_tool_metrics, dtype=object)  # 工具指标也放到 non_tensor_batch
+                "turn_stats": np.array(all_turn_stats, dtype=object),  # List[List[Dict]] - Keep request boundaries
+                "tool_metrics": np.array(all_tool_metrics, dtype=object)  # Store each request's tool metrics, not the aggregated batch metrics
             }
         )
     
