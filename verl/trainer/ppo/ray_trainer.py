@@ -949,16 +949,20 @@ class RayPPOTrainer:
                         
                         # Extract tool metrics from rollout output
                         if "tool_metrics" in gen_batch_output.non_tensor_batch:
-                            tool_metrics = gen_batch_output.non_tensor_batch["tool_metrics"]
+                            per_request_tool_metrics = gen_batch_output.non_tensor_batch["tool_metrics"]
                             
-                            # Add shared tool metrics with tools/ prefix
-                            for key, value in tool_metrics.get("shared_metrics", {}).items():
+                            # Aggregate per-request tool metrics across the batch
+                            if isinstance(per_request_tool_metrics, np.ndarray):
+                                per_request_metrics_list = per_request_tool_metrics.tolist()
+                            else:
+                                per_request_metrics_list = per_request_tool_metrics
+                            
+                            # Aggregate shared metrics across all requests
+                            batch_shared_metrics = self._aggregate_shared_tool_metrics(per_request_metrics_list)
+                            
+                            # Add aggregated tool metrics with tools/ prefix
+                            for key, value in batch_shared_metrics.items():
                                 metrics[f"tools/{key}"] = value
-                            
-                            # Add tool-specific metrics with tools/{tool_name}/ prefix  
-                            for tool_name, tool_specific_data in tool_metrics.get("tool_specific_metrics", {}).items():
-                                for key, value in tool_specific_data.items():
-                                    metrics[f"tools/{tool_name}/{key}"] = value
                         
                         # Extract conversation turn statistics from rollout output
                         if "turn_stats" in gen_batch_output.non_tensor_batch:
@@ -1169,3 +1173,91 @@ class RayPPOTrainer:
                     pprint(f"Final validation metrics: {last_val_metrics}")
                     progress_bar.close()
                     return
+
+    def _aggregate_shared_tool_metrics(self, per_request_metrics_list):
+        """Aggregate shared tool metrics from all requests in the batch.
+        
+        Args:
+            per_request_metrics_list: List of dictionaries containing tool metrics from each request
+            Each request metric dict has the structure returned by AsyncRolloutRequest.get_aggregated_tool_metrics()
+            
+        Returns:
+            Dict containing aggregated shared tool metrics for the batch
+        """
+        if not per_request_metrics_list:
+            return {}
+        
+        # Initialize batch-level shared metrics
+        batch_shared_metrics = {
+            "batch_tool_invocation_count_total": 0,
+            "batch_tool_invocation_count_avg": 0.0,
+            "batch_tool_response_length_total": 0,
+            "batch_tool_response_length_avg": 0.0,
+            "batch_tool_latency_ms_total": 0.0,
+            "batch_tool_latency_ms_min": float('inf'),
+            "batch_tool_latency_ms_max": 0.0,
+            "batch_tool_latency_ms_avg": 0.0,
+            "batch_tool_success_count_total": 0,
+            "batch_tool_success_rate_avg": 0.0,
+            "batch_requests_with_tools": 0,
+            "batch_unique_tools_used": set(),
+        }
+        
+        total_success_rates = []
+        
+        for request_metrics in per_request_metrics_list:
+            if not isinstance(request_metrics, dict):
+                continue
+                
+            shared_metrics = request_metrics.get("shared_metrics", {})
+            
+            # Count requests with tool usage
+            if shared_metrics.get("tool_invocation_count", 0) > 0:
+                batch_shared_metrics["batch_requests_with_tools"] += 1
+                
+                # Aggregate counts and totals
+                batch_shared_metrics["batch_tool_invocation_count_total"] += shared_metrics.get("tool_invocation_count", 0)
+                batch_shared_metrics["batch_tool_response_length_total"] += shared_metrics.get("tool_response_char_length_total", 0)
+                batch_shared_metrics["batch_tool_latency_ms_total"] += shared_metrics.get("tool_latency_ms_total", 0.0)
+                batch_shared_metrics["batch_tool_success_count_total"] += shared_metrics.get("tool_success_count", 0)
+                
+                # Track success rates for later averaging
+                if shared_metrics.get("tool_success_rate", 0.0) > 0:
+                    total_success_rates.append(shared_metrics["tool_success_rate"])
+                
+                # Update min/max latencies
+                req_min_latency = shared_metrics.get("tool_latency_ms_min", 0.0)
+                req_max_latency = shared_metrics.get("tool_latency_ms_max", 0.0)
+                
+                if req_min_latency > 0 and req_min_latency < batch_shared_metrics["batch_tool_latency_ms_min"]:
+                    batch_shared_metrics["batch_tool_latency_ms_min"] = req_min_latency
+                if req_max_latency > batch_shared_metrics["batch_tool_latency_ms_max"]:
+                    batch_shared_metrics["batch_tool_latency_ms_max"] = req_max_latency
+                
+                # Collect unique tools
+                tools_used = shared_metrics.get("tools_used", [])
+                if isinstance(tools_used, list):
+                    batch_shared_metrics["batch_unique_tools_used"].update(tools_used)
+                elif isinstance(tools_used, set):
+                    batch_shared_metrics["batch_unique_tools_used"].update(tools_used)
+        
+        # Calculate batch-level averages
+        batch_size = len(per_request_metrics_list)
+        if batch_size > 0:
+            batch_shared_metrics["batch_tool_invocation_count_avg"] = batch_shared_metrics["batch_tool_invocation_count_total"] / batch_size
+            batch_shared_metrics["batch_tool_response_length_avg"] = batch_shared_metrics["batch_tool_response_length_total"] / batch_size
+        
+        if batch_shared_metrics["batch_tool_invocation_count_total"] > 0:
+            batch_shared_metrics["batch_tool_latency_ms_avg"] = batch_shared_metrics["batch_tool_latency_ms_total"] / batch_shared_metrics["batch_tool_invocation_count_total"]
+        
+        if total_success_rates:
+            batch_shared_metrics["batch_tool_success_rate_avg"] = sum(total_success_rates) / len(total_success_rates)
+        
+        # Handle edge cases
+        if batch_shared_metrics["batch_tool_latency_ms_min"] == float('inf'):
+            batch_shared_metrics["batch_tool_latency_ms_min"] = 0.0
+        
+        # Convert set to list for JSON serialization
+        batch_shared_metrics["batch_unique_tools_used"] = list(batch_shared_metrics["batch_unique_tools_used"])
+        
+        return batch_shared_metrics
