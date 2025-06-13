@@ -1066,10 +1066,10 @@ class SGLangRollout(BaseRollout):
         return DataProto(
             batch=batch,
             non_tensor_batch={
-                "messages": np.array(messages),
-                "reward_scores": np.array(reward_scores),
-                "turn_stats": all_turn_stats,  # List[List[Dict]] - 保留 request 边界
-                "tool_metrics": batch_tool_metrics  # 工具指标也放到 non_tensor_batch
+                "messages": np.array(messages, dtype=object),
+                "reward_scores": np.array(reward_scores, dtype=object),
+                "turn_stats": np.array(all_turn_stats, dtype=object),  # List[List[Dict]] - 保留 request 边界
+                "tool_metrics": np.array(batch_tool_metrics, dtype=object)  # 工具指标也放到 non_tensor_batch
             }
         )
     
