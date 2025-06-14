@@ -102,6 +102,12 @@ class AsyncRolloutRequest(BaseModel):
     turn_stats: Dict[str, Any] = {}
     turn_stats_list: List[Dict[str, Any]] = []
 
+    # Enhanced conversation tracking
+    conversation_metadata: Dict[str, Any] = {}
+    termination_reason: Optional[str] = None
+    termination_metadata: Dict[str, Any] = {}
+    turn_tool_calls_detail: List[int] = []
+
     @model_validator(mode="before")
     @classmethod
     def initialize_request(cls, values):
@@ -129,6 +135,23 @@ class AsyncRolloutRequest(BaseModel):
         values["generation_prompt_ids"] = values["input_ids"][len(tokens_without_prompt) :]
         values["base_conv_wo_gen_prompt_end_pos"] = len(tokenizer.apply_chat_template(BASE_CHAT_HISTORY, tools=tools, add_generation_prompt=False, tokenize=False))
         values["base_conv_with_gen_prompt_end_pos"] = len(tokenizer.apply_chat_template(BASE_CHAT_HISTORY, tools=tools, add_generation_prompt=True, tokenize=False))
+
+        # Initialize enhanced conversation tracking
+        values["conversation_metadata"] = {
+            "total_turns": 0,
+            "role_turns": {"assistant": 0, "user": 0, "tool": 0},
+            "role_tokens": {"assistant": 0, "user": 0, "tool": 0},
+            "role_chars": {"assistant": 0, "user": 0, "tool": 0},
+            "turn_token_lengths": [],
+            "turn_char_lengths": [],
+            "assistant_tool_calls_total": 0,
+            "turns_with_tools_count": 0,
+        }
+
+        values["termination_metadata"] = {"final_turn_count": 0, "final_token_count": 0}
+
+        values["turn_tool_calls_detail"] = []
+
         return values
 
     def _update_input_ids(self, new_input_ids: List[int], attention_mask: bool, loss_mask: bool) -> None:
@@ -341,6 +364,248 @@ class AsyncRolloutRequest(BaseModel):
         shared_metrics["tools_used"] = list(shared_metrics["tools_used"])
 
         return {"shared_metrics": shared_metrics, "tool_specific_metrics": tool_specific_metrics}
+
+    def track_conversation_turn_from_stats(self, role: str, turn_stats: Dict[str, Any]):
+        """根据现有的 turn_stats 追踪对话轮次信息"""
+        tokens = turn_stats.get("token_count", 0)
+        chars = turn_stats.get("char_count", 0)
+        tool_calls_count = turn_stats.get("tool_calls_count", 0)
+
+        # 更新角色统计
+        self.conversation_metadata["role_turns"][role] += 1
+        self.conversation_metadata["role_tokens"][role] += tokens
+        self.conversation_metadata["role_chars"][role] += chars
+
+        # 更新总轮次
+        self.conversation_metadata["total_turns"] += 1
+
+        # 记录轮次长度
+        self.conversation_metadata["turn_token_lengths"].append(tokens)
+        self.conversation_metadata["turn_char_lengths"].append(chars)
+
+        # 记录工具调用
+        if tool_calls_count > 0:
+            self.conversation_metadata["turns_with_tools_count"] += 1
+            if role == "assistant":
+                self.conversation_metadata["assistant_tool_calls_total"] += tool_calls_count
+
+        # 记录turn-level工具调用详情
+        turn_index = self.conversation_metadata["total_turns"] - 1
+        while len(self.turn_tool_calls_detail) <= turn_index:
+            self.turn_tool_calls_detail.append(0)
+        self.turn_tool_calls_detail[turn_index] = tool_calls_count
+
+    def initialize_conversation_from_prompt(self, messages: List[Message], tokenizer):
+        """从初始 prompt 中的 messages 初始化对话统计"""
+        for msg in messages:
+            if hasattr(msg, "content") and msg.content:
+                tokens = len(tokenizer.encode(msg.content))
+                chars = len(msg.content)
+                role = msg.role
+
+                # 更新统计
+                self.conversation_metadata["role_turns"][role] += 1
+                self.conversation_metadata["role_tokens"][role] += tokens
+                self.conversation_metadata["role_chars"][role] += chars
+                self.conversation_metadata["total_turns"] += 1
+                self.conversation_metadata["turn_token_lengths"].append(tokens)
+                self.conversation_metadata["turn_char_lengths"].append(chars)
+
+                # 检查工具调用
+                tool_calls_count = 0
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    tool_calls_count = len(msg.tool_calls)
+                    if role == "assistant":
+                        self.conversation_metadata["assistant_tool_calls_total"] += tool_calls_count
+                    self.conversation_metadata["turns_with_tools_count"] += 1
+
+                # 记录turn-level工具调用
+                turn_index = self.conversation_metadata["total_turns"] - 1
+                while len(self.turn_tool_calls_detail) <= turn_index:
+                    self.turn_tool_calls_detail.append(0)
+                self.turn_tool_calls_detail[turn_index] = tool_calls_count
+
+    def set_termination_reason(self, reason: str):
+        """设置终止原因"""
+        self.termination_reason = reason
+        self.termination_metadata["final_turn_count"] = self.conversation_metadata["total_turns"]
+        self.termination_metadata["final_token_count"] = sum(self.conversation_metadata["role_tokens"].values())
+
+    def get_enhanced_tool_metrics(self) -> Dict[str, Any]:
+        """获取增强的工具指标，包括 per-tool specific metrics"""
+
+        # 1. Trajectory-level 工具调用统计
+        trajectory_tool_calls = 0
+        turn_tool_calls_all = []  # 所有轮次的工具调用数
+
+        # 2. 收集所有工具指标的原始值
+        all_latencies = []
+        all_response_lengths = []
+        all_success_rates = []
+
+        # 3. Per-tool 指标收集
+        tool_specific_raw_data = {}
+
+        # 处理 turn-level 工具调用统计
+        for turn_calls in self.turn_tool_calls_detail:
+            if turn_calls > 0:
+                turn_tool_calls_all.append(turn_calls)
+
+        # 过滤掉非工具指标的键
+        tool_metrics_keys = [k for k in self.metrics.keys() if k not in ["turn_stats", "token_stats"]]
+
+        for tool_name in tool_metrics_keys:
+            metrics_list = self.metrics[tool_name]
+            tool_specific_raw_data[tool_name] = {
+                "calls_per_trajectory": len(metrics_list),
+                "calls_per_turn_values": [],
+                "latency_ms_values": [],
+                "success_rate_values": [],
+                "code_char_len_values": [],
+                "response_char_len_values": [],
+            }
+
+            trajectory_tool_calls += len(metrics_list)
+
+            for metrics in metrics_list:
+                if isinstance(metrics, dict):
+                    base_metrics = metrics.get("base_metrics", {})
+                    specific_metrics = metrics.get("specific_metrics", {})
+
+                    # 收集基础指标
+                    if "latency_ms" in base_metrics:
+                        latency = base_metrics["latency_ms"]
+                        all_latencies.append(latency)
+                        tool_specific_raw_data[tool_name]["latency_ms_values"].append(latency)
+
+                    if "response_char_length" in base_metrics:
+                        resp_len = base_metrics["response_char_length"]
+                        all_response_lengths.append(resp_len)
+                        tool_specific_raw_data[tool_name]["response_char_len_values"].append(resp_len)
+
+                    if "success" in base_metrics:
+                        success = base_metrics["success"]
+                        success_rate = 1.0 if success else 0.0
+                        all_success_rates.append(success_rate)
+                        tool_specific_raw_data[tool_name]["success_rate_values"].append(success_rate)
+
+                    # 收集工具特定指标
+                    if "code_char_len" in specific_metrics:
+                        code_len = specific_metrics["code_char_len"]
+                        tool_specific_raw_data[tool_name]["code_char_len_values"].append(code_len)
+
+        # 4. 构建聚合指标
+        aggregated_metrics = {"tool_metrics": {}, "tool_specific_metrics": {}}
+
+        # Trajectory-level 工具调用统计
+        aggregated_metrics["tool_metrics"]["tool_calls_per_trajectory"] = trajectory_tool_calls
+
+        # Turn-level 工具调用统计
+        if turn_tool_calls_all:
+            aggregated_metrics["tool_metrics"]["tool_calls_per_turn_min"] = min(turn_tool_calls_all)
+            aggregated_metrics["tool_metrics"]["tool_calls_per_turn_avg"] = sum(turn_tool_calls_all) / len(turn_tool_calls_all)
+            aggregated_metrics["tool_metrics"]["tool_calls_per_turn_max"] = max(turn_tool_calls_all)
+            # 保存原始值用于批次聚合
+            aggregated_metrics["tool_metrics"]["tool_calls_per_turn_values"] = turn_tool_calls_all
+
+        # 全局工具指标
+        if all_latencies:
+            aggregated_metrics["tool_metrics"]["latency_ms_min"] = min(all_latencies)
+            aggregated_metrics["tool_metrics"]["latency_ms_avg"] = sum(all_latencies) / len(all_latencies)
+            aggregated_metrics["tool_metrics"]["latency_ms_max"] = max(all_latencies)
+            aggregated_metrics["tool_metrics"]["latency_ms_values"] = all_latencies
+
+        if all_response_lengths:
+            aggregated_metrics["tool_metrics"]["response_char_len_min"] = min(all_response_lengths)
+            aggregated_metrics["tool_metrics"]["response_char_len_avg"] = sum(all_response_lengths) / len(all_response_lengths)
+            aggregated_metrics["tool_metrics"]["response_char_len_max"] = max(all_response_lengths)
+            aggregated_metrics["tool_metrics"]["response_char_len_values"] = all_response_lengths
+
+        if all_success_rates:
+            trajectory_success_rate = sum(all_success_rates) / len(all_success_rates)
+            aggregated_metrics["tool_metrics"]["success_rate"] = trajectory_success_rate
+
+        # Per-tool specific metrics
+        for tool_name, raw_data in tool_specific_raw_data.items():
+            tool_aggregated = {}
+
+            # Calls per trajectory and turn
+            tool_aggregated["calls_per_trajectory"] = raw_data["calls_per_trajectory"]
+
+            # 延迟指标
+            if raw_data["latency_ms_values"]:
+                values = raw_data["latency_ms_values"]
+                tool_aggregated["latency_ms_min"] = min(values)
+                tool_aggregated["latency_ms_avg"] = sum(values) / len(values)
+                tool_aggregated["latency_ms_max"] = max(values)
+                tool_aggregated["latency_ms_values"] = values  # 原始值
+
+            # 成功率指标
+            if raw_data["success_rate_values"]:
+                values = raw_data["success_rate_values"]
+                tool_aggregated["success_rate_min"] = min(values)
+                tool_aggregated["success_rate_avg"] = sum(values) / len(values)
+                tool_aggregated["success_rate_max"] = max(values)
+                tool_aggregated["success_rate_values"] = values
+
+            # 代码长度指标
+            if raw_data["code_char_len_values"]:
+                values = raw_data["code_char_len_values"]
+                tool_aggregated["code_char_len_min"] = min(values)
+                tool_aggregated["code_char_len_avg"] = sum(values) / len(values)
+                tool_aggregated["code_char_len_max"] = max(values)
+                tool_aggregated["code_char_len_values"] = values
+
+            # 响应长度指标
+            if raw_data["response_char_len_values"]:
+                values = raw_data["response_char_len_values"]
+                tool_aggregated["response_char_len_min"] = min(values)
+                tool_aggregated["response_char_len_avg"] = sum(values) / len(values)
+                tool_aggregated["response_char_len_max"] = max(values)
+                tool_aggregated["response_char_len_values"] = values
+
+            aggregated_metrics["tool_specific_metrics"][tool_name] = tool_aggregated
+
+        return aggregated_metrics
+
+    def get_conversation_metrics(self) -> Dict[str, Any]:
+        """获取对话指标"""
+        conv_meta = self.conversation_metadata
+
+        # 计算比例
+        total_turns = conv_meta["total_turns"]
+        tool_turn_ratio = conv_meta["turns_with_tools_count"] / total_turns if total_turns > 0 else 0
+        assistant_turn_ratio = conv_meta["role_turns"]["assistant"] / total_turns if total_turns > 0 else 0
+
+        return {
+            # 基础对话统计
+            "total_turns": total_turns,
+            "total_tokens": sum(conv_meta["role_tokens"].values()),
+            "total_chars": sum(conv_meta["role_chars"].values()),
+            # 按角色统计
+            "assistant_turns": conv_meta["role_turns"]["assistant"],
+            "user_turns": conv_meta["role_turns"]["user"],
+            "tool_turns": conv_meta["role_turns"]["tool"],
+            "assistant_tokens": conv_meta["role_tokens"]["assistant"],
+            "user_tokens": conv_meta["role_tokens"]["user"],
+            "tool_tokens": conv_meta["role_tokens"]["tool"],
+            "assistant_chars": conv_meta["role_chars"]["assistant"],
+            "user_chars": conv_meta["role_chars"]["user"],
+            "tool_chars": conv_meta["role_chars"]["tool"],
+            # 工具使用统计
+            "assistant_tool_calls": conv_meta["assistant_tool_calls_total"],
+            "turns_with_tools": conv_meta["turns_with_tools_count"],
+            # 轮次长度统计 (原始值，用于批次聚合)
+            "turn_token_lengths": conv_meta["turn_token_lengths"],
+            "turn_char_lengths": conv_meta["turn_char_lengths"],
+            # 比例统计
+            "tool_turn_ratio": tool_turn_ratio,
+            "assistant_turn_ratio": assistant_turn_ratio,
+        }
+
+    def get_termination_metrics(self) -> Dict[str, Any]:
+        """获取终止指标"""
+        return {"reason": self.termination_reason, "final_turn_count": self.termination_metadata["final_turn_count"], "final_token_count": self.termination_metadata["final_token_count"]}
 
     def finalize(
         self,

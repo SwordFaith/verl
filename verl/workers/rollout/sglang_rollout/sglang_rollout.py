@@ -756,17 +756,17 @@ class SGLangRollout(BaseRollout):
                     # 添加工具响应消息并收集 turn stats
                     tool_responses = [resp for resp, _, _ in tool_call_results]
                     turn_stats = _req.add_tool_response_messages(self.tokenizer, tool_responses)
-                    _req.turn_stats_list.append({
-                        "turn_index": len(_req.messages) - 1,
-                        "timestamp": time.time(),
-                        **turn_stats
-                    })
-                    
+                    _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
+
+                    # 跟踪对话轮次
+                    _req.track_conversation_turn_from_stats("tool", turn_stats)
+
                     # 更新工具指标
                     for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
                         _req.update_metrics(metrics, tool_call.function.name)
                     if is_tool_call_overlong or len(_req.input_ids) >= self.config.max_model_len:
                         finish_reason_type = FinishReasonTypeEnum.LENGTH
+                        _req.set_termination_reason("max_tokens")
                         break
                     _req.state = AsyncRolloutRequestStateEnum.RUNNING
                 else:
@@ -776,6 +776,7 @@ class SGLangRollout(BaseRollout):
                 # since SGLang raises an error when max_new_tokens + 1 is greater to max_model_len (the extra token accounts for the EOS token).
                 if len(_req.get_generation_prompt_ids(self.tokenizer)) + 1 >= self.config.max_model_len:
                     finish_reason_type = FinishReasonTypeEnum.LENGTH
+                    _req.set_termination_reason("max_tokens")
                     break
                 output = await self._handle_engine_call(_req, do_sample, is_validate, **kwargs)
                 content = output["text"]
@@ -783,11 +784,9 @@ class SGLangRollout(BaseRollout):
                 current_turns += 1
                 if finish_reason_type == FinishReasonTypeEnum.LENGTH:
                     turn_stats = _req.add_assistant_message(self.tokenizer, content)
-                    _req.turn_stats_list.append({
-                        "turn_index": len(_req.messages) - 1,
-                        "timestamp": time.time(),
-                        **turn_stats
-                    })
+                    _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
+                    _req.track_conversation_turn_from_stats("assistant", turn_stats)
+                    _req.set_termination_reason("max_tokens")
                     break
                 else:
                     if self._function_call_parser and self._function_call_parser.has_tool_call(content):
@@ -820,32 +819,26 @@ class SGLangRollout(BaseRollout):
                             )
                         if len(parsed_tool_calls) > 0:
                             turn_stats = _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
-                            _req.turn_stats_list.append({
-                                "turn_index": len(_req.messages) - 1,
-                                "timestamp": time.time(),
-                                **turn_stats
-                            })
+                            _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
+                            _req.track_conversation_turn_from_stats("assistant", turn_stats)
                         else:
                             turn_stats = _req.add_assistant_message(self.tokenizer, content)
-                            _req.turn_stats_list.append({
-                                "turn_index": len(_req.messages) - 1,
-                                "timestamp": time.time(),
-                                **turn_stats
-                            })
+                            _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
+                            _req.track_conversation_turn_from_stats("assistant", turn_stats)
                             finish_reason_type = FinishReasonTypeEnum.STOP
                             _req.state = AsyncRolloutRequestStateEnum.COMPLETED
+                            _req.set_termination_reason("eos_token")
                             break
                     else:
                         turn_stats = _req.add_assistant_message(self.tokenizer, content)
-                        _req.turn_stats_list.append({
-                            "turn_index": len(_req.messages) - 1,
-                            "timestamp": time.time(),
-                            **turn_stats
-                        })
+                        _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
+                        _req.track_conversation_turn_from_stats("assistant", turn_stats)
+                        _req.set_termination_reason("eos_token")
                         break
 
         if current_turns >= self.config.multi_turn.max_turns:
             finish_reason_type = FinishReasonTypeEnum.STOP
+            _req.set_termination_reason("max_assistant_turns")
 
         # Calculate the reward for each tool
         async def calc_reward_and_release_fn(name: str, tool: BaseTool):
@@ -1045,16 +1038,29 @@ class SGLangRollout(BaseRollout):
             batch_size=len(sorted_output_req_list),
         )
 
-        # Collect per-request tool metrics and turn stats  
+        # Collect per-request enhanced metrics including conversation and termination
         all_tool_metrics = []
+        all_conversation_metrics = []
+        all_termination_metrics = []
         all_turn_stats = []
+
         for req in sorted_output_req_list:
-            tool_metrics = req.get_aggregated_tool_metrics()
-            all_tool_metrics.append(tool_metrics)
+            # 收集增强的工具指标
+            enhanced_tool_metrics = req.get_enhanced_tool_metrics()
+            all_tool_metrics.append(enhanced_tool_metrics)
+
+            # 收集对话指标
+            conversation_metrics = req.get_conversation_metrics()
+            all_conversation_metrics.append(conversation_metrics)
+
+            # 收集终止指标
+            termination_metrics = req.get_termination_metrics()
+            all_termination_metrics.append(termination_metrics)
+
             # 收集 turn stats
-            turn_stats = getattr(req, 'turn_stats_list', [])
+            turn_stats = getattr(req, "turn_stats_list", [])
             all_turn_stats.append(turn_stats)
-        
+
         # free cache engine
         if self.config.free_cache_engine and self._engine is not None and self._tp_rank == 0:
             loop = asyncio.get_event_loop()
@@ -1066,10 +1072,11 @@ class SGLangRollout(BaseRollout):
                 "messages": np.array(messages, dtype=object),
                 "reward_scores": np.array(reward_scores, dtype=object),
                 "turn_stats": np.array(all_turn_stats, dtype=object),  # List[List[Dict]] - Keep request boundaries
-                "tool_metrics": np.array(all_tool_metrics, dtype=object)  # Store each request's tool metrics, not the aggregated batch metrics
-            }
+                "tool_metrics": np.array(all_tool_metrics, dtype=object),  # Enhanced tool metrics with per-tool breakdown
+                "conversation_metrics": np.array(all_conversation_metrics, dtype=object),  # Conversation-level metrics
+                "termination_metrics": np.array(all_termination_metrics, dtype=object),  # Termination-related metrics
+            },
         )
-    
 
     def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto, n: int) -> list[AsyncRolloutRequest]:
         assert "raw_prompt" in prompts.non_tensor_batch, "need data.return_raw_chat=True, due to no official way do parse_messages"
@@ -1109,6 +1116,9 @@ class SGLangRollout(BaseRollout):
                     enable_tokenization_sanity_check=self.config.multi_turn.enable_tokenization_sanity_check,
                     tokenizer=self.tokenizer,
                 )
+
+                # 初始化对话统计从prompt中的messages
+                req.initialize_conversation_from_prompt(req.messages, self.tokenizer)
 
                 error_message = f"Request {req.request_id} has mismatched lengths: input_ids={len(req.input_ids)}, attention_mask={len(req.attention_mask)}, position_ids={len(req.position_ids)}, loss_mask={len(req.loss_mask)}"
                 assert len(req.input_ids) == len(req.attention_mask) == len(req.position_ids) == len(req.loss_mask), error_message
@@ -1153,7 +1163,7 @@ class SGLangRollout(BaseRollout):
             base_conv_wo_gen_prompt_end_pos=len(_input_ids),
             base_conv_with_gen_prompt_end_pos=len(_input_ids),
             turn_stats={},
-            token_stats={}
+            token_stats={},
         )
 
         # json_request already contains sampling_params

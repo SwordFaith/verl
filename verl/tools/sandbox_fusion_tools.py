@@ -207,7 +207,7 @@ class SandboxFusionTool(BaseTool):
             raise ValueError(f"Unknown mode: {self.mode}")
 
         # Tool-specific metrics
-        specific_metrics = {"code_length": len(code), "execution_mode": self.mode, "language": language if "language" in locals() else "python", "timeout_used": timeout if "timeout" in locals() else 30}
+        specific_metrics = {"code_char_len": len(code), "execution_mode": self.mode, "language": language, "timeout_used": timeout, "response_char_len": len(result) if isinstance(result, str) else 0}
 
         return result, 0.0, success, specific_metrics
 
