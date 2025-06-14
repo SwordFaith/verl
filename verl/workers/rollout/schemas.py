@@ -139,9 +139,9 @@ class AsyncRolloutRequest(BaseModel):
         # Initialize enhanced conversation tracking
         values["conversation_metadata"] = {
             "total_turns": 0,
-            "role_turns": {"assistant": 0, "user": 0, "tool": 0},
-            "role_tokens": {"assistant": 0, "user": 0, "tool": 0},
-            "role_chars": {"assistant": 0, "user": 0, "tool": 0},
+            "role_turns": {"assistant": 0, "user": 0, "tool": 0, "system": 0},
+            "role_tokens": {"assistant": 0, "user": 0, "tool": 0, "system": 0},
+            "role_chars": {"assistant": 0, "user": 0, "tool": 0, "system": 0},
             "turn_token_lengths": [],
             "turn_char_lengths": [],
             "assistant_tool_calls_total": 0,
@@ -371,6 +371,12 @@ class AsyncRolloutRequest(BaseModel):
         chars = turn_stats.get("char_count", 0)
         tool_calls_count = turn_stats.get("tool_calls_count", 0)
 
+        # 确保角色存在于字典中
+        if role not in self.conversation_metadata["role_turns"]:
+            self.conversation_metadata["role_turns"][role] = 0
+            self.conversation_metadata["role_tokens"][role] = 0
+            self.conversation_metadata["role_chars"][role] = 0
+
         # 更新角色统计
         self.conversation_metadata["role_turns"][role] += 1
         self.conversation_metadata["role_tokens"][role] += tokens
@@ -402,6 +408,12 @@ class AsyncRolloutRequest(BaseModel):
                 tokens = len(tokenizer.encode(msg.content))
                 chars = len(msg.content)
                 role = msg.role
+
+                # 确保角色存在于字典中
+                if role not in self.conversation_metadata["role_turns"]:
+                    self.conversation_metadata["role_turns"][role] = 0
+                    self.conversation_metadata["role_tokens"][role] = 0
+                    self.conversation_metadata["role_chars"][role] = 0
 
                 # 更新统计
                 self.conversation_metadata["role_turns"][role] += 1
@@ -583,15 +595,18 @@ class AsyncRolloutRequest(BaseModel):
             "total_tokens": sum(conv_meta["role_tokens"].values()),
             "total_chars": sum(conv_meta["role_chars"].values()),
             # 按角色统计
-            "assistant_turns": conv_meta["role_turns"]["assistant"],
-            "user_turns": conv_meta["role_turns"]["user"],
-            "tool_turns": conv_meta["role_turns"]["tool"],
-            "assistant_tokens": conv_meta["role_tokens"]["assistant"],
-            "user_tokens": conv_meta["role_tokens"]["user"],
-            "tool_tokens": conv_meta["role_tokens"]["tool"],
-            "assistant_chars": conv_meta["role_chars"]["assistant"],
-            "user_chars": conv_meta["role_chars"]["user"],
-            "tool_chars": conv_meta["role_chars"]["tool"],
+            "assistant_turns": conv_meta["role_turns"].get("assistant", 0),
+            "user_turns": conv_meta["role_turns"].get("user", 0),
+            "tool_turns": conv_meta["role_turns"].get("tool", 0),
+            "system_turns": conv_meta["role_turns"].get("system", 0),
+            "assistant_tokens": conv_meta["role_tokens"].get("assistant", 0),
+            "user_tokens": conv_meta["role_tokens"].get("user", 0),
+            "tool_tokens": conv_meta["role_tokens"].get("tool", 0),
+            "system_tokens": conv_meta["role_tokens"].get("system", 0),
+            "assistant_chars": conv_meta["role_chars"].get("assistant", 0),
+            "user_chars": conv_meta["role_chars"].get("user", 0),
+            "tool_chars": conv_meta["role_chars"].get("tool", 0),
+            "system_chars": conv_meta["role_chars"].get("system", 0),
             # 工具使用统计
             "assistant_tool_calls": conv_meta["assistant_tool_calls_total"],
             "turns_with_tools": conv_meta["turns_with_tools_count"],

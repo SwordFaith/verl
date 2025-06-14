@@ -1139,7 +1139,7 @@ class SGLangRollout(BaseRollout):
             request_id=str(uuid4()),
             state=AsyncRolloutRequestStateEnum.PENDING,
             messages=[Message.model_validate(msg) for msg in json_request["messages"]],
-            tools=_tool_schemas,
+            tool_schemas=_tool_schemas,
             tools_kwargs=_tools_kwargs,
             input_ids=_input_ids,
             prompt_ids=_input_ids,
@@ -1159,11 +1159,7 @@ class SGLangRollout(BaseRollout):
             max_prompt_len=self.config.prompt_length,
             use_inference_chat_template=self.config.multi_turn.use_inference_chat_template,
             enable_tokenization_sanity_check=self.config.multi_turn.enable_tokenization_sanity_check,
-            generation_prompt_ids=_input_ids,
-            base_conv_wo_gen_prompt_end_pos=len(_input_ids),
-            base_conv_with_gen_prompt_end_pos=len(_input_ids),
-            turn_stats={},
-            token_stats={},
+            tokenizer=self.tokenizer,
         )
 
         # json_request already contains sampling_params
