@@ -19,7 +19,7 @@ torchrun \
      -m verl.trainer.fsdp_sft_trainer \
      data.max_length=16384 \
      data.train_batch_size=128 \
-     data.micro_batch_size_per_gpu=4 \
+     data.micro_batch_size_per_gpu=2 \
      data.train_files=$HOME/data/retool_multi_turn_sft_preprocessed/train.parquet \
      data.val_files=$HOME/data/retool_multi_turn_sft_preprocessed/test.parquet \
      data.multiturn.enable=true \
