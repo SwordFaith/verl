@@ -29,7 +29,7 @@ torchrun \
      data.multiturn.tools_key=tools \
      model.partial_pretrain=$HOME/models/Qwen/Qwen2.5-32B-Instruct \
      model.trust_remote_code=true \
-     model.fsdp_config.cpu_offload=true \
+     model.fsdp_config.cpu_offload=false \
      model.fsdp_config.offload_params=true \
      model.fsdp_config.model_dtype=bf16 \
      optim.lr=1e-6 \
