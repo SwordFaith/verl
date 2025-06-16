@@ -200,17 +200,12 @@ class AsyncRolloutRequest(BaseModel):
         content_ids = tokenizer.encode(full_content[self.base_conv_wo_gen_prompt_end_pos :], add_special_tokens=False)
         self._update_input_ids(content_ids, attention_mask=True, loss_mask=False)
 
-        # 计算统计信息
-        total_chars = sum(len(content) for content in contents)
-
-        return {"role": "tool", "token_count": len(content_ids), "char_count": total_chars, "tool_count": len(contents)}
-
-    def check_if_tool_response_messages_overlong(self, tokenizer: PreTrainedTokenizer, contents: list[str]) -> bool:
+    def check_if_tool_response_messages_overlong(self, tokenizer: PreTrainedTokenizer, contents: list[str]) -> tuple[bool, int]:
         if not contents:
             return False
         content = tokenizer.apply_chat_template([*BASE_CHAT_HISTORY, *self.messages[-len(contents) :]], tools=([tool.model_dump() for tool in self.tool_schemas] if self.tool_schemas else None), add_generation_prompt=False, tokenize=False)
         content_ids = tokenizer.encode(content[self.base_conv_wo_gen_prompt_end_pos :], add_special_tokens=False)
-        return (len(self.input_ids) + len(content_ids)) > self.max_model_len
+        return (len(self.input_ids) + len(content_ids)) > self.max_model_len, len(content_ids)
 
     def update_metrics(self, metrics: Any, tool_id: str) -> None:
         """

@@ -738,6 +738,7 @@ class SGLangRollout(BaseRollout):
         output = None
 
         current_turns = 0
+        last_content_len = 0
         while current_turns < self.config.multi_turn.max_turns:
             if _req.state == AsyncRolloutRequestStateEnum.PENDING:
                 await self._handle_pending_state(_req)
@@ -757,18 +758,19 @@ class SGLangRollout(BaseRollout):
                             )
                         )
                         tool_call_responses.append(tool_call_results[-1][0])
-                        if _req.check_if_tool_response_messages_overlong(self.tokenizer, tool_call_responses):
+                        is_tool_call_overlong, content_len = _req.check_if_tool_response_messages_overlong(self.tokenizer, tool_call_responses)
+                        turn_stats = {
+                            "token_count": content_len - last_content_len,
+                            "char_count": len(tool_call_responses[-1]),
+                            "tool_count": 1,
+                        }
+                        last_content_len = content_len
+                        _req.track_conversation_turn_from_stats("tool", turn_stats)
+                        _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
+                        if is_tool_call_overlong:
                             is_tool_call_overlong = True
                             break
-                    # 添加工具响应消息并收集 turn stats
-                    tool_responses = [resp for resp, _, _ in tool_call_results]
-                    turn_stats = _req.add_tool_response_messages(self.tokenizer, tool_responses)
-                    _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
-
-                    # 跟踪对话轮次
-                    _req.track_conversation_turn_from_stats("tool", turn_stats)
-
-                    # 更新工具指标
+                    # update tool metrics
                     for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
                         _req.update_metrics(metrics, tool_call.function.name)
                     if is_tool_call_overlong or len(_req.input_ids) >= self.config.max_model_len:
