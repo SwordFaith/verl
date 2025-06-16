@@ -29,6 +29,7 @@ torchrun \
      model.trust_remote_code=true \
      model.fsdp_config.cpu_offload=true \
      model.fsdp_config.offload_params=true \
+     model.fsdp_config.model_dtype=bf16 \
      optim.lr=1e-6 \
      trainer.default_local_dir=$HOME/checkpoints/retool-multiturn-sft/$EXPERIMENT_NAME \
      trainer.project_name=retool-multiturn-sft \
