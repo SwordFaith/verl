@@ -72,6 +72,7 @@ class ToolLogger:
     - Instance-level uniqueness for same-process multiple tool instances
     - Thread-safe operations with internal locking
     - JSON structured logging with optional plain text compatibility
+    - Ray-serializable with lazy initialization
     """
 
     def __init__(self, tool_name: str, rank_info: dict, config: dict):
@@ -83,8 +84,9 @@ class ToolLogger:
         # Generate unique instance ID to prevent same-process conflicts
         self.instance_id = str(uuid4())[:8]
 
-        # Thread-safe lock for logger operations
-        self._lock = threading.RLock()
+        # Lazy initialization for Ray compatibility
+        self._lock = None
+        self._initialized = False
 
         # Apply test mode if enabled
         if self.config.get("test_mode", {}).get("enable", False):
@@ -92,6 +94,12 @@ class ToolLogger:
 
         if self.config.get("enable", True):
             self._setup_logger()
+
+    def _ensure_initialized(self):
+        """Ensure the logger is properly initialized (lazy initialization for Ray compatibility)."""
+        if not self._initialized:
+            self._lock = threading.RLock()
+            self._initialized = True
 
     def _apply_default_config(self, user_config: dict) -> dict:
         """Apply default configuration and merge with user config."""
@@ -129,6 +137,7 @@ class ToolLogger:
 
     def _setup_logger(self):
         """Setup the logger with handlers ensuring complete isolation."""
+        self._ensure_initialized()
         with self._lock:
             # Create unique logger name with rank, process, and instance isolation
             if self.config.get("separate_by_rank", True):
@@ -222,6 +231,7 @@ class ToolLogger:
         if not self.logger:
             return
 
+        self._ensure_initialized()
         with self._lock:
             log_data = {"timestamp": time.time(), "rank": self.rank_info["global_rank"], "tool": self.tool_name, "instance": self.instance_id, "message": message, **(extra_data or {})}
             getattr(self.logger, level.lower())(json.dumps(log_data))
@@ -251,6 +261,7 @@ class ToolLogger:
         """Log with standard logging level (plain text format)."""
         if not self.logger:
             return
+        self._ensure_initialized()
         with self._lock:
             self.logger.log(level, message)
 
@@ -278,6 +289,7 @@ class ToolLogger:
         """Log an exception with traceback."""
         if not self.logger:
             return
+        self._ensure_initialized()
         with self._lock:
             self.logger.exception(message)
 
@@ -289,6 +301,24 @@ class ToolLogger:
         Warning: Direct usage bypasses thread safety. Use with caution.
         """
         return self.logger
+
+    # Ray serialization support
+    def __getstate__(self):
+        """Custom serialization for Ray compatibility."""
+        state = self.__dict__.copy()
+        # Remove the non-serializable RLock
+        state["_lock"] = None
+        state["_initialized"] = False
+        # Remove the logger which contains handlers that may not be serializable
+        state["logger"] = None
+        return state
+
+    def __setstate__(self, state):
+        """Custom deserialization for Ray compatibility."""
+        self.__dict__.update(state)
+        # Re-setup logger if it was enabled
+        if self.config.get("enable", True):
+            self._setup_logger()
 
 
 class BaseTool:
