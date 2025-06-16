@@ -808,7 +808,23 @@ class SGLangRollout(BaseRollout):
                             normed_content = content
                             tool_calls = []
                         parsed_tool_calls = []
-                        for tool_call in tool_calls:
+                        original_tool_calls_count = len(tool_calls)
+                        truncated_tool_calls_count = 0
+
+                        # Apply max_parallel_tool_call_size limit
+                        max_parallel_size = self.config.multi_turn.get("max_parallel_tool_call_size", 1)
+                        if max_parallel_size is None or max_parallel_size <= 0:
+                            # No limit if None or 0
+                            effective_max_size = len(tool_calls)
+                        else:
+                            effective_max_size = min(max_parallel_size, len(tool_calls))
+                            truncated_tool_calls_count = max(0, len(tool_calls) - max_parallel_size)
+
+                        for i, tool_call in enumerate(tool_calls):
+                            # Stop processing if we've reached the limit
+                            if i >= effective_max_size:
+                                break
+
                             function, has_decode_error = OpenAIFunctionCallSchema.from_openai_function_parsed_schema(
                                 OpenAIFunctionParsedSchema(
                                     name=tool_call.name,
@@ -824,6 +840,14 @@ class SGLangRollout(BaseRollout):
                                     function=function,
                                 )
                             )
+
+                        # Track tool call truncation metrics
+                        if truncated_tool_calls_count > 0:
+                            truncation_metrics = {"tool_call_truncation_occurred": True, "original_tool_calls_count": original_tool_calls_count, "truncated_tool_calls_count": truncated_tool_calls_count, "processed_tool_calls_count": len(parsed_tool_calls)}
+                            # Add truncation metrics to request for later collection
+                            if not hasattr(_req, "tool_truncation_metrics"):
+                                _req.tool_truncation_metrics = []
+                            _req.tool_truncation_metrics.append(truncation_metrics)
                         if len(parsed_tool_calls) > 0:
                             turn_stats = _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
                             _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
@@ -1054,6 +1078,13 @@ class SGLangRollout(BaseRollout):
         for req in sorted_output_req_list:
             # 收集增强的工具指标
             enhanced_tool_metrics = req.get_enhanced_tool_metrics()
+
+            # 收集 tool truncation metrics 并合并到 tool_metrics 中
+            tool_truncation_metrics = getattr(req, "tool_truncation_metrics", [])
+            if tool_truncation_metrics:
+                # 将 truncation metrics 添加到 enhanced_tool_metrics 中
+                enhanced_tool_metrics["tool_truncation_events"] = tool_truncation_metrics
+
             all_tool_metrics.append(enhanced_tool_metrics)
 
             # 收集对话指标
@@ -1079,7 +1110,7 @@ class SGLangRollout(BaseRollout):
                 "messages": np.array(messages, dtype=object),
                 "reward_scores": np.array(reward_scores, dtype=object),
                 "turn_stats": np.array(all_turn_stats, dtype=object),  # List[List[Dict]] - Keep request boundaries
-                "tool_metrics": np.array(all_tool_metrics, dtype=object),  # Enhanced tool metrics with per-tool breakdown
+                "tool_metrics": np.array(all_tool_metrics, dtype=object),  # Enhanced tool metrics with per-tool breakdown including truncation events
                 "conversation_metrics": np.array(all_conversation_metrics, dtype=object),  # Conversation-level metrics
                 "termination_metrics": np.array(all_termination_metrics, dtype=object),  # Termination-related metrics
             },

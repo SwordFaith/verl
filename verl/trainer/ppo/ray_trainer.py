@@ -1352,12 +1352,21 @@ class RayPPOTrainer:
         # Per-tool 特定指标收集
         tool_specific_raw_data = {}
 
+        # Tool truncation metrics collection
+        tool_truncation_events = []
+
         for req_metrics in per_request_enhanced_metrics_list:
             if not isinstance(req_metrics, dict):
                 continue
 
             tool_metrics = req_metrics.get("tool_metrics", {})
             tool_specific_metrics = req_metrics.get("tool_specific_metrics", {})
+
+            # Collect tool truncation events
+            if "tool_truncation_events" in req_metrics:
+                truncation_events = req_metrics["tool_truncation_events"]
+                if isinstance(truncation_events, list):
+                    tool_truncation_events.extend(truncation_events)
 
             # 收集全局工具指标
             if "tool_calls_per_trajectory" in tool_metrics:
@@ -1467,6 +1476,52 @@ class RayPPOTrainer:
                 aggregated[f"{tool_name}_response_char_len_min"] = min(values)
                 aggregated[f"{tool_name}_response_char_len_avg"] = sum(values) / len(values)
                 aggregated[f"{tool_name}_response_char_len_max"] = max(values)
+
+        # Aggregate tool truncation metrics
+        if tool_truncation_events:
+            # Count total truncation events (轮数)
+            truncated_turns_count = len(tool_truncation_events)
+            aggregated["tool_truncation_events_count"] = truncated_turns_count
+
+            # Collect truncation statistics
+            original_counts = []
+            truncated_counts = []
+            processed_counts = []
+
+            for event in tool_truncation_events:
+                if isinstance(event, dict):
+                    original_counts.append(event.get("original_tool_calls_count", 0))
+                    truncated_counts.append(event.get("truncated_tool_calls_count", 0))
+                    processed_counts.append(event.get("processed_tool_calls_count", 0))
+
+            # Aggregate truncation statistics
+            if original_counts:
+                aggregated["tool_truncation_original_calls_min"] = min(original_counts)
+                aggregated["tool_truncation_original_calls_avg"] = sum(original_counts) / len(original_counts)
+                aggregated["tool_truncation_original_calls_max"] = max(original_counts)
+
+            if truncated_counts:
+                aggregated["tool_truncation_dropped_calls_min"] = min(truncated_counts)
+                aggregated["tool_truncation_dropped_calls_avg"] = sum(truncated_counts) / len(truncated_counts)
+                aggregated["tool_truncation_dropped_calls_max"] = max(truncated_counts)
+                aggregated["tool_truncation_dropped_calls_total"] = sum(truncated_counts)
+
+            if processed_counts:
+                aggregated["tool_truncation_processed_calls_min"] = min(processed_counts)
+                aggregated["tool_truncation_processed_calls_avg"] = sum(processed_counts) / len(processed_counts)
+                aggregated["tool_truncation_processed_calls_max"] = max(processed_counts)
+
+            # Calculate tool truncation ratio: 生成工具调用被截断的轮数 / 生成工具调用的轮数
+            # 我们需要从 turn_tool_calls_values 中计算生成工具调用的总轮数
+            total_tool_turns = len([val for val in turn_tool_calls_values if val > 0]) if turn_tool_calls_values else 0
+            if total_tool_turns > 0:
+                aggregated["tool_truncation_ratio"] = truncated_turns_count / total_tool_turns
+            else:
+                aggregated["tool_truncation_ratio"] = 0.0
+        else:
+            # No truncation events occurred
+            aggregated["tool_truncation_events_count"] = 0
+            aggregated["tool_truncation_ratio"] = 0.0
 
         return aggregated
 
