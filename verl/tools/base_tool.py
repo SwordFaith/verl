@@ -25,7 +25,6 @@ from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-import ray
 import torch.distributed as dist
 from omegaconf import OmegaConf
 
@@ -345,15 +344,19 @@ class BaseTool:
             rank_info["world_size"] = dist.get_world_size()
             rank_info["local_rank"] = int(os.environ.get("LOCAL_RANK", 0))
 
-        # Ray environment
-        if ray.is_initialized():
-            worker_info = ray.get_runtime_context()
-            rank_info["node_id"] = worker_info.get("node_id", "unknown")
-            rank_info["worker_id"] = worker_info.get("worker_id", "unknown")
+        # Use torchrun/distributed environment variables (more stable than Ray API)
+        rank_info["node_id"] = os.environ.get("GROUP_RANK", os.environ.get("NODE_RANK", "unknown"))
+        rank_info["worker_id"] = os.environ.get("RANK", str(rank_info["global_rank"]))
+
+        # Additional torchrun environment info for better identification
+        job_id = os.environ.get("JOB_ID", "unknown")
+        if job_id != "unknown":
+            rank_info["node_id"] = f"{job_id}_{rank_info['node_id']}"
 
         # Fallback: use process ID as identifier
         if rank_info["global_rank"] == 0 and rank_info["node_id"] == "unknown":
             rank_info["global_rank"] = os.getpid() % 1000
+            rank_info["node_id"] = f"pid_{os.getpid()}"
 
         return rank_info
 
