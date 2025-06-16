@@ -887,8 +887,6 @@ class SGLangRollout(BaseRollout):
                         if truncated_tool_calls_count > 0:
                             truncation_metrics = {"tool_call_truncation_occurred": True, "original_tool_calls_count": original_tool_calls_count, "truncated_tool_calls_count": truncated_tool_calls_count, "processed_tool_calls_count": len(parsed_tool_calls)}
                             # Add truncation metrics to request for later collection
-                            if not hasattr(_req, "tool_truncation_metrics"):
-                                _req.tool_truncation_metrics = []
                             _req.tool_truncation_metrics.append(truncation_metrics)
                         if len(parsed_tool_calls) > 0:
                             turn_stats = _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
@@ -1097,10 +1095,9 @@ class SGLangRollout(BaseRollout):
             enhanced_tool_metrics = req.get_enhanced_tool_metrics()
 
             # 收集 tool truncation metrics 并合并到 tool_metrics 中
-            tool_truncation_metrics = getattr(req, "tool_truncation_metrics", [])
-            if tool_truncation_metrics:
+            if req.tool_truncation_metrics:
                 # 将 truncation metrics 添加到 enhanced_tool_metrics 中
-                enhanced_tool_metrics["tool_truncation_events"] = tool_truncation_metrics
+                enhanced_tool_metrics["tool_truncation_events"] = req.tool_truncation_metrics
 
             all_tool_metrics.append(enhanced_tool_metrics)
 

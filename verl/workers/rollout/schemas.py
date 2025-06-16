@@ -107,6 +107,7 @@ class AsyncRolloutRequest(BaseModel):
     termination_reason: Optional[str] = None
     termination_metadata: Dict[str, Any] = {}
     turn_tool_calls_detail: List[int] = []
+    tool_truncation_metrics: List[Dict[str, Any]] = []
 
     @model_validator(mode="before")
     @classmethod

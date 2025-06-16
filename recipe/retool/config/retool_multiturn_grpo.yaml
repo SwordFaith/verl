@@ -19,6 +19,12 @@ actor_rollout_ref:
     multi_turn:
       enable: True
       max_assistant_turns: 20
+    val_kwargs:
+      temperature: 0.7
+      top_k: -1
+      top_p: 0.95
+      n: 1
+      do_sample: True
 
 trainer:
   log_val_generations: 20
