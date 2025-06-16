@@ -32,3 +32,8 @@ trainer:
   validation_data_dir: /data/tensorboard/validation
   tool_logging:
     log_dir: /data/tensorboard/tool_logs
+    noise_filters:
+      no_code_events:
+        patterns: ["no code parsed"]
+        console_action: "suppress"
+        file_action: "suppress"
