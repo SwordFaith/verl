@@ -621,76 +621,83 @@ class SGLangRollout(BaseRollout):
 
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
+
+        # Create request-level sampling parameters
+        request_sampling_params = self.sampling_params.copy()
         if not do_sample:
-            kwargs = dict(
-                n=1,
-                presence_penalty=0.0,
-                frequency_penalty=0.0,
-                repetition_penalty=1.0,
-                temperature=0,
-                top_p=1,
-                top_k=-1,
-                ignore_eos=False,
-                min_new_tokens=0,
-                max_new_tokens=self.config.response_length,
-                skip_special_tokens=True,
-                spaces_between_special_tokens=True,
+            request_sampling_params.update(
+                {
+                    "n": 1,
+                    "presence_penalty": 0.0,
+                    "frequency_penalty": 0.0,
+                    "repetition_penalty": 1.0,
+                    "temperature": 0,
+                    "top_p": 1,
+                    "top_k": -1,
+                    "ignore_eos": False,
+                    "min_new_tokens": 0,
+                    "max_new_tokens": self.config.response_length,
+                    "skip_special_tokens": True,
+                    "spaces_between_special_tokens": True,
+                }
             )
         elif is_validate:
-            kwargs = dict(
-                top_k=self.config.val_kwargs.top_k,
-                top_p=self.config.val_kwargs.top_p,
-                temperature=self.config.val_kwargs.temperature,
-                n=1,  # if validate, already repeat in ray_trainer
+            request_sampling_params.update(
+                {
+                    "top_k": self.config.val_kwargs.top_k,
+                    "top_p": self.config.val_kwargs.top_p,
+                    "temperature": self.config.val_kwargs.temperature,
+                    "n": 1,  # if validate, already repeat in ray_trainer
+                }
             )
 
-        # users can customize different sampling_params at different run
-        with self.update_sampling_params(**kwargs):
-            # print(f"{self.sampling_params=}")
-            if self._tp_rank == 0:
-                loop = asyncio.get_event_loop()
-                output = loop.run_until_complete(
-                    self._engine.async_generate(
-                        prompt=None,  # because we have already convert it to prompt token id
-                        sampling_params=self.sampling_params,
-                        return_logprob=True,
-                        input_ids=idx_list,
-                        image_data=image_list,
-                    )
+        # Update with any additional kwargs
+        request_sampling_params.update(kwargs)
+
+        if self._tp_rank == 0:
+            loop = asyncio.get_event_loop()
+            output = loop.run_until_complete(
+                self._engine.async_generate(
+                    prompt=None,  # because we have already convert it to prompt token id
+                    sampling_params=self.sampling_params,
+                    return_logprob=True,
+                    input_ids=idx_list,
+                    image_data=image_list,
                 )
-            else:
-                output = None
-
-            # Most naive implementation, can extract tensor and send via gloo if too slow
-            dist.barrier()
-            [output] = broadcast_pyobj(
-                data=[output],
-                rank=self._rank,
-                dist_group=self._device_mesh_cpu["tp"].get_group(),
-                src=self._device_mesh_cpu["tp"].mesh[0].item(),
-                force_cpu_device=False,
             )
-            out = _post_process_outputs(self.tokenizer, output)
+        else:
+            output = None
 
-            response = out[0].to(idx.device)
-            rollout_log_probs = out[1].to(idx.device)
+        # Most naive implementation, can extract tensor and send via gloo if too slow
+        dist.barrier()
+        [output] = broadcast_pyobj(
+            data=[output],
+            rank=self._rank,
+            dist_group=self._device_mesh_cpu["tp"].get_group(),
+            src=self._device_mesh_cpu["tp"].mesh[0].item(),
+            force_cpu_device=False,
+        )
+        out = _post_process_outputs(self.tokenizer, output)
 
-            if response.shape[1] < self.config.response_length:
-                response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
-                rollout_log_probs = pad_sequence_to_length(rollout_log_probs, self.config.response_length, self.pad_token_id)
+        response = out[0].to(idx.device)
+        rollout_log_probs = out[1].to(idx.device)
 
-            # utilize current sampling params
-            if self.sampling_params.get("n", 1) > 1 and do_sample:
-                idx = idx.repeat_interleave(self.sampling_params["n"], dim=0)
-                attention_mask = attention_mask.repeat_interleave(self.sampling_params["n"], dim=0)
-                position_ids = position_ids.repeat_interleave(self.sampling_params["n"], dim=0)
-                batch_size = batch_size * self.sampling_params["n"]
-                _non_tensor_batch = {}
-                for key, val in non_tensor_batch.items():
-                    _non_tensor_batch[key] = np.repeat(val, self.sampling_params["n"], axis=0)
-            else:
-                _non_tensor_batch = non_tensor_batch
-            seq = torch.cat([idx, response], dim=-1)
+        if response.shape[1] < self.config.response_length:
+            response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
+            rollout_log_probs = pad_sequence_to_length(rollout_log_probs, self.config.response_length, self.pad_token_id)
+
+        # utilize current sampling params
+        if request_sampling_params.get("n", 1) > 1 and do_sample:
+            idx = idx.repeat_interleave(request_sampling_params["n"], dim=0)
+            attention_mask = attention_mask.repeat_interleave(request_sampling_params["n"], dim=0)
+            position_ids = position_ids.repeat_interleave(request_sampling_params["n"], dim=0)
+            batch_size = batch_size * request_sampling_params["n"]
+            _non_tensor_batch = {}
+            for key, val in non_tensor_batch.items():
+                _non_tensor_batch[key] = np.repeat(val, request_sampling_params["n"], axis=0)
+        else:
+            _non_tensor_batch = non_tensor_batch
+        seq = torch.cat([idx, response], dim=-1)
 
         response_length = response.size(1)
         delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)
@@ -738,7 +745,39 @@ class SGLangRollout(BaseRollout):
         output = None
 
         current_turns = 0
-        last_content_len = 0
+
+        # Create request-level sampling parameters
+        request_sampling_params = self.sampling_params.copy()
+        if not do_sample:
+            request_sampling_params.update(
+                {
+                    "n": 1,
+                    "presence_penalty": 0.0,
+                    "frequency_penalty": 0.0,
+                    "repetition_penalty": 1.0,
+                    "temperature": 0,
+                    "top_p": 1,
+                    "top_k": -1,
+                    "ignore_eos": False,
+                    "min_new_tokens": 0,
+                    "max_new_tokens": self.config.response_length,
+                    "skip_special_tokens": True,
+                    "spaces_between_special_tokens": True,
+                }
+            )
+        elif is_validate:
+            request_sampling_params.update(
+                {
+                    "top_k": self.config.val_kwargs.top_k,
+                    "top_p": self.config.val_kwargs.top_p,
+                    "temperature": self.config.val_kwargs.temperature,
+                    "n": 1,  # if validate, already repeat in ray_trainer
+                }
+            )
+
+        # Update with any additional kwargs
+        request_sampling_params.update(kwargs)
+
         while current_turns < self.config.multi_turn.max_turns:
             if _req.state == AsyncRolloutRequestStateEnum.PENDING:
                 await self._handle_pending_state(_req)
@@ -749,6 +788,7 @@ class SGLangRollout(BaseRollout):
                     is_tool_call_overlong = False
                     tool_call_responses = []
                     tool_call_results = []
+                    last_content_len = 0
                     for tool_call in parsed_tool_calls:
                         tool_call_results.append(
                             await self._tool_map[tool_call.function.name].execute(
@@ -787,7 +827,7 @@ class SGLangRollout(BaseRollout):
                     finish_reason_type = FinishReasonTypeEnum.LENGTH
                     _req.set_termination_reason("max_tokens")
                     break
-                output = await self._handle_engine_call(_req, do_sample, is_validate, **kwargs)
+                output = await self._handle_engine_call(_req, request_sampling_params)
                 content = output["text"]
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
                 current_turns += 1
@@ -889,44 +929,19 @@ class SGLangRollout(BaseRollout):
 
         return _req
 
-    async def _handle_engine_call(self, _req: AsyncRolloutRequest, do_sample: bool, is_validate: bool, override_n: bool = True, **kwargs) -> dict:
+    async def _handle_engine_call(self, _req: AsyncRolloutRequest, sampling_params: dict) -> dict:
         generation_prompt_ids = _req.get_generation_prompt_ids(self.tokenizer)
         # Adjust max_new_tokens to ensure it is not greater than max_model_len - 1
         # SGLang raises an error when max_new_tokens + 1 is greater to max_model_len (the extra token accounts for the EOS token).
         max_new_tokens = min(self.config.response_length, self.config.max_model_len - len(generation_prompt_ids) - 1)
-        if not do_sample:
-            kwargs = dict(
-                n=1,
-                presence_penalty=0.0,
-                frequency_penalty=0.0,
-                repetition_penalty=1.0,
-                temperature=0,
-                top_p=1,
-                top_k=-1,
-                ignore_eos=False,
-                min_new_tokens=0,
-                max_new_tokens=self.config.response_length,
-                skip_special_tokens=True,
-                spaces_between_special_tokens=True,
-            )
-        elif is_validate:
-            # TODO: try **
-            kwargs = {
-                "top_k": self.config.val_kwargs.top_k,
-                "top_p": self.config.val_kwargs.top_p,
-                "temperature": self.config.val_kwargs.temperature,
-                "n": 1,  # if validate, already repeat in ray_trainer
-            }
+        kwargs = sampling_params.copy()
         kwargs["max_new_tokens"] = max_new_tokens
-        if "n" not in kwargs or (kwargs["n"] > 1 and override_n):  # group size is supported in preprocess
-            kwargs["n"] = 1
-        # users can customize different sampling_params at different run
-        with self.update_sampling_params(**kwargs):
-            output = await self._engine.async_generate(
-                input_ids=generation_prompt_ids,
-                sampling_params=self.sampling_params,
-                return_logprob=False,
-            )
+        kwargs["n"] = 1  # group size is supported in preprocess
+        output = await self._engine.async_generate(
+            input_ids=generation_prompt_ids,
+            sampling_params=kwargs,
+            return_logprob=False,
+        )
         return output
 
     async def _handle_pending_state(self, _req: AsyncRolloutRequest) -> AsyncRolloutRequest:
@@ -1203,7 +1218,7 @@ class SGLangRollout(BaseRollout):
         )
 
         # json_request already contains sampling_params
-        output = await self._handle_engine_call(req, True, False, False, **json_request)
+        output = await self._handle_engine_call(req, json_request)
         # it can be Dict or AsyncIterator[Dict]
         if isinstance(output, dict):
             outputs = [output]
