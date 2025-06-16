@@ -226,6 +226,7 @@ class SGLangRollout(BaseRollout):
         port=None,
         trust_remote_code: bool = False,
         device_mesh: DeviceMesh | None = None,
+        tool_logging_config: dict = None,
         **kwargs,
     ):
         """Synchronized SGLang rollout engine.
@@ -253,6 +254,7 @@ class SGLangRollout(BaseRollout):
         super().__init__()
         self.config = config
         self._device_mesh_cpu = device_mesh
+        self.tool_logging_config = tool_logging_config or {}
         os.environ.setdefault("SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK", "true")
 
         (
@@ -453,8 +455,13 @@ class SGLangRollout(BaseRollout):
                 tool_schema_dict = OmegaConf.to_container(tool_config.tool_schema, resolve=True)
                 tool_schema = OpenAIFunctionToolSchema.model_validate(tool_schema_dict)
 
+                # Prepare tool configuration with logging config
+                tool_config_dict = OmegaConf.to_container(tool_config.config, resolve=True)
+                if hasattr(self, "tool_logging_config") and self.tool_logging_config:
+                    tool_config_dict["tool_logging_config"] = self.tool_logging_config
+
                 tool = tool_cls(
-                    config=OmegaConf.to_container(tool_config.config, resolve=True),
+                    config=tool_config_dict,
                     tool_schema=tool_schema,
                 )
                 tool_list.append(tool)

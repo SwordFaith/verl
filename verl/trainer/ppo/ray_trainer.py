@@ -706,9 +706,15 @@ class RayPPOTrainer:
         # create actor and rollout
         if self.hybrid_engine:
             resource_pool = self.resource_pool_manager.get_resource_pool(Role.ActorRollout)
+            # Add tool logging config to actor_rollout_ref config
+            actor_rollout_config = OmegaConf.create(self.config.actor_rollout_ref)
+            if hasattr(self.config, "trainer") and hasattr(self.config.trainer, "tool_logging"):
+                with open_dict(actor_rollout_config):
+                    actor_rollout_config.tool_logging = self.config.trainer.tool_logging
+
             actor_rollout_cls = RayClassWithInitArgs(
                 cls=self.role_worker_mapping[Role.ActorRollout],
-                config=self.config.actor_rollout_ref,
+                config=actor_rollout_config,
                 role="actor_rollout",
             )
             self.resource_pool_to_cls[resource_pool]["actor_rollout"] = actor_rollout_cls

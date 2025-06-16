@@ -799,6 +799,114 @@ trainer:
   # Directory for logging validation data; no dump if null
   validation_data_dir: null
 
+  # Universal tool logging configuration for all tools inheriting from BaseTool
+  tool_logging:
+
+    # Whether to enable tool logging globally
+    enable: true
+
+    # Tool log directory; null uses default_local_dir/tool_logs
+    log_dir: null
+
+    # Whether to separate log files by rank to avoid race conditions
+    separate_by_rank: true
+
+    # Output target configurations
+    outputs:
+
+      # Console output configuration
+      console:
+
+        # Whether to enable console output for tool logs
+        enable: true
+
+        # Log level for console output: DEBUG, INFO, WARNING, ERROR, CRITICAL
+        level: "ERROR"
+
+        # Whether to apply noise filters to console output
+        apply_filters: true
+
+      # File output configuration
+      file:
+
+        # Whether to enable file output for tool logs
+        enable: true
+
+        # Log level for file output: DEBUG, INFO, WARNING, ERROR, CRITICAL
+        level: "WARNING"
+
+        # Whether to apply noise filters to file output (False preserves all info for debugging)
+        apply_filters: false
+
+        # Maximum size per log file before rotation
+        max_size: "50MB"
+
+        # Number of backup files to keep during rotation
+        backup_count: 3
+
+    # Noise filtering configuration to suppress common non-critical messages
+    noise_filters:
+
+      # Timeout-related events (common in code execution tools)
+      timeout_events:
+
+        # Patterns to match in log messages
+        patterns: ["TimeLimitExceeded", "time limit exceed", "timeout"]
+
+        # Action for console output: suppress, downgrade, allow
+        console_action: "suppress"
+
+        # Action for file output: suppress, downgrade, allow
+        file_action: "downgrade"
+
+        # Target level when downgrading
+        downgrade_to: "DEBUG"
+
+      # Retryable errors (network issues, etc.)
+      retryable_errors:
+
+        # Patterns to match in log messages
+        patterns: ["Gateway Timeout", "Connection refused", "retry"]
+
+        # Console action for retryable errors
+        console_action: "suppress"
+
+        # File action for retryable errors
+        file_action: "allow"
+
+    # Tool-specific logging overrides
+    tool_specific:
+
+      # SandboxFusionTool specific configuration
+      SandboxFusionTool:
+
+        # Override file logging level for code execution tools
+        file_level: "INFO"
+
+        # Whether to log only metrics without detailed execution info
+        metrics_only: false
+
+      # SearchTool specific configuration
+      SearchTool:
+
+        # Override console level for search tools (more silent)
+        console_level: "CRITICAL"
+
+        # Whether to log only metrics for search operations
+        metrics_only: true
+
+    # Quick test mode configuration
+    test_mode:
+
+      # Whether to enable test mode (overrides other settings)
+      enable: false
+
+      # Whether to make console completely silent in test mode
+      console_silent: true
+
+      # Whether to enable verbose file logging in test mode
+      file_verbose: true
+
   # Number of nodes used in the training
   nnodes: 1
 

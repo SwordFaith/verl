@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-import os
 from typing import Any, Optional, Tuple
 from uuid import uuid4
 
@@ -22,9 +20,6 @@ from verl.utils.reward_score import gsm8k
 
 from .base_tool import BaseTool
 from .schemas import OpenAIFunctionToolSchema
-
-logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
 class Gsm8kTool(BaseTool):
@@ -90,13 +85,8 @@ class Gsm8kTool(BaseTool):
         self._instance_dict[instance_id]["reward"] = reward
 
         # Tool-specific metrics
-        specific_metrics = {
-            "parsed_answer": answer,
-            "ground_truth": self._instance_dict[instance_id]["ground_truth"],
-            "answer_improvement": reward > self._instance_dict[instance_id]["reward"],
-            "current_reward": reward
-        }
-        
+        specific_metrics = {"parsed_answer": answer, "ground_truth": self._instance_dict[instance_id]["ground_truth"], "answer_improvement": reward > self._instance_dict[instance_id]["reward"], "current_reward": reward}
+
         success = reward > 0  # Consider successful if reward is positive
         return f"Current parsed {answer=} {reward=}", tool_reward, success, specific_metrics
 

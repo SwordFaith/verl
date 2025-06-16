@@ -14,8 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-import os
 import random
 import threading
 import time
@@ -32,9 +30,6 @@ from verl.utils.reward_score.sandbox_fusion.utils import _process_single_case
 
 from .base_tool import BaseTool
 from .schemas import OpenAIFunctionToolSchema
-
-logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 T = TypeVar("T")
 
@@ -92,7 +87,8 @@ class ExecutionWorker:
                 future = self._thread_pool.submit(fn, *fn_args, **fn_kwargs)
                 return future.result()
             except Exception as e:
-                logger.warning(f"Error when executing code: {e}")
+                if self.tool_logger:
+                    self.tool_logger.warning(f"Error when executing code: {e}")
                 raise
 
     def shutdown(self):
@@ -163,8 +159,8 @@ class SandboxFusionTool(BaseTool):
             self.sandbox_fusion_url = self.sandbox_fusion_url.rstrip("/") + "/run_jupyter"
         else:
             self.sandbox_fusion_url = self.sandbox_fusion_url.rstrip("/") + "/run_code"
-        log_msg = f"Init SandboxFusionTool with config: {config}"
-        logger.info(log_msg)
+        if self.tool_logger:
+            self.tool_logger.info(f"Init SandboxFusionTool with config: {config}")
 
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return self.tool_schema
@@ -193,7 +189,8 @@ class SandboxFusionTool(BaseTool):
             if self.mode in ["run_jupyter", "sim_jupyter"]:
                 self._instance_dict[instance_id]["cells"].append(code)
         else:
-            logger.error(f"no code parsed, instance_id: {instance_id}, parameters: {parameters}")
+            if self.tool_logger:
+                self.tool_logger.error(f"no code parsed, instance_id: {instance_id}, parameters: {parameters}")
             return "no code parsed", 0.0, False, {}
 
         # Execute code based on mode and get both result and success status
@@ -223,11 +220,13 @@ class SandboxFusionTool(BaseTool):
                     # Check if this is a retryable error (like Gateway Timeout)
                     if "Gateway Timeout" in error_msg and attempt < max_retries - 1:
                         delay = random.uniform(1, 5)
-                        logger.warning(f"API request failed with Gateway Timeout, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                        if self.tool_logger:
+                            self.tool_logger.warning(f"API request failed with Gateway Timeout, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
                         time.sleep(delay)
                         continue
 
-                    logger.error(f"API request error for instance {instance_id}: {error_msg}")
+                    if self.tool_logger:
+                        self.tool_logger.error(f"API request error for instance {instance_id}: {error_msg}")
                     return f"Error in calling code interpreter: {error_msg}", False
 
                 # Check API status
@@ -236,7 +235,8 @@ class SandboxFusionTool(BaseTool):
                     error_msg = "Sandbox error occurred"
                     if metadata.get("api_response"):
                         error_msg += f": {metadata['api_response']}"
-                    logger.error(f"Sandbox error for instance {instance_id}: {error_msg}")
+                    if self.tool_logger:
+                        self.tool_logger.error(f"Sandbox error for instance {instance_id}: {error_msg}")
                     return f"Error in calling code interpreter: {error_msg}", False
 
                 elif api_status == "Failed":
@@ -248,7 +248,8 @@ class SandboxFusionTool(BaseTool):
                             ret_str = f"Compilation time limit exceeded, time: {metadata.get('compile_duration', 'unknown')}"
                         if metadata.get("compile_stderr"):
                             ret_str += f"\ncompile_stderr: {metadata['compile_stderr']}"
-                        logger.warning(f"Compile error for instance {instance_id}: {ret_str}")
+                        if self.tool_logger:
+                            self.tool_logger.warning(f"Compile error for instance {instance_id}: {ret_str}")
                         return ret_str, False
 
                     # Handle runtime errors
@@ -259,7 +260,8 @@ class SandboxFusionTool(BaseTool):
                             ret_str += f"\nstdout: {metadata['stdout']}"
                         if metadata.get("stderr"):
                             ret_str += f"\nstderr: {metadata['stderr']}"
-                        logger.warning(f"Runtime timeout for instance {instance_id}: {ret_str}")
+                        if self.tool_logger:
+                            self.tool_logger.warning(f"Runtime timeout for instance {instance_id}: {ret_str}")
                         return ret_str, False
 
                     elif run_status == "Error" or (run_status == "Finished" and metadata.get("exit_code") != 0):
@@ -270,11 +272,13 @@ class SandboxFusionTool(BaseTool):
                             ret_str += f"stdout: {metadata['stdout']}\n"
                         if metadata.get("stderr"):
                             ret_str += f"stderr: {metadata['stderr']}\n"
-                        logger.warning(f"Runtime error for instance {instance_id}: {ret_str}")
+                        if self.tool_logger:
+                            self.tool_logger.warning(f"Runtime error for instance {instance_id}: {ret_str}")
                         return ret_str, False
 
                     # Unknown failure state
-                    logger.warning(f"Unknown failure state for instance {instance_id}: {metadata}")
+                    if self.tool_logger:
+                        self.tool_logger.warning(f"Unknown failure state for instance {instance_id}: {metadata}")
                     return f"Unknown execution failure: {metadata.get('status', 'unknown')}", False
 
                 elif api_status == "Success":
@@ -295,27 +299,33 @@ class SandboxFusionTool(BaseTool):
                         # Return just stdout if successful and no errors, otherwise return structured output
                         if is_success and not metadata.get("stderr"):
                             actual_output = metadata["stdout"] if metadata["stdout"] is not None else ""
-                            logger.debug(f"Successful execution for instance {instance_id}: {actual_output}")
+                            if self.tool_logger:
+                                self.tool_logger.debug(f"Successful execution for instance {instance_id}: {actual_output}")
                             return actual_output, True
                         else:
-                            logger.debug(f"Execution completed for instance {instance_id} with success={is_success}: {ret_str}")
+                            if self.tool_logger:
+                                self.tool_logger.debug(f"Execution completed for instance {instance_id} with success={is_success}: {ret_str}")
                             return ret_str, is_success
                     else:
-                        logger.warning(f"Unexpected success state for instance {instance_id}: run_status={metadata.get('run_status')}")
+                        if self.tool_logger:
+                            self.tool_logger.warning(f"Unexpected success state for instance {instance_id}: run_status={metadata.get('run_status')}")
                         return f"Unexpected execution state: {metadata.get('run_status')}", False
 
                 else:
                     # Unknown API status
-                    logger.error(f"Unknown API status for instance {instance_id}: {api_status}")
+                    if self.tool_logger:
+                        self.tool_logger.error(f"Unknown API status for instance {instance_id}: {api_status}")
                     return f"Unknown API status: {api_status}", False
 
             except Exception as e:
                 if attempt < max_retries - 1:
                     delay = random.uniform(1, 5)
-                    logger.warning(f"Request failed with error: {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    if self.tool_logger:
+                        self.tool_logger.warning(f"Request failed with error: {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
                     time.sleep(delay)
                     continue
-                logger.error(f"Error in execute_code after {max_retries} attempts: {e}")
+                if self.tool_logger:
+                    self.tool_logger.error(f"Error in execute_code after {max_retries} attempts: {e}")
                 return f"Error in calling code interpreter: {e}", False
 
         # Should not reach here
@@ -334,10 +344,12 @@ class SandboxFusionTool(BaseTool):
         try:
             response = requests.request("POST", self.sandbox_fusion_url, json=payload)
         except Exception as e:
-            logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}")
+            if self.tool_logger:
+                self.tool_logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}")
             return f"Error in calling code interpreter: {e}", False
         if response.status_code != 200:
-            logger.error(f"Error in get_jupyter_mode_result: {response.status_code}\npayload: {payload}\nresponse: {response.text}")
+            if self.tool_logger:
+                self.tool_logger.error(f"Error in get_jupyter_mode_result: {response.status_code}\npayload: {payload}\nresponse: {response.text}")
             try:
                 response_json = response.json()
                 error_message = response_json["error_message"]
@@ -372,14 +384,17 @@ class SandboxFusionTool(BaseTool):
                     return "Execution time limit exceeded", False
                 else:
                     error_msg = f"Unknown execution status: {execution_status}"
-                    logger.error(f"{error_msg}\nresponse: {response.text}")
+                    if self.tool_logger:
+                        self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
                     return error_msg, False
             else:
                 error_msg = f"Unknown response status: {status}"
-                logger.error(f"{error_msg}\nresponse: {response.text}")
+                if self.tool_logger:
+                    self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
                 return error_msg, False
         except Exception as e:
-            logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
+            if self.tool_logger:
+                self.tool_logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
             return f"Error in calling code interpreter: {response.text}", False
 
     def get_sim_jupyter_mode_result(self, instance_id, timeout: Optional[int] = None):
@@ -427,20 +442,24 @@ class SandboxFusionTool(BaseTool):
                     break
                 if attempt < max_retries - 1:
                     delay = random.uniform(1, 5)
-                    logger.warning(f"Request failed with status {response.status_code}, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    if self.tool_logger:
+                        self.tool_logger.warning(f"Request failed with status {response.status_code}, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
                     time.sleep(delay)
                     continue
             except Exception as e:
                 if attempt < max_retries - 1:
                     delay = random.uniform(1, 5)
-                    logger.warning(f"Request failed with error: {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    if self.tool_logger:
+                        self.tool_logger.warning(f"Request failed with error: {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
                     time.sleep(delay)
                     continue
-                logger.error(f"Error in get_sim_jupyter_mode_result after {max_retries} attempts: {e}\npayload: {payload}")
+                if self.tool_logger:
+                    self.tool_logger.error(f"Error in get_sim_jupyter_mode_result after {max_retries} attempts: {e}\npayload: {payload}")
                 return f"Error in calling code interpreter: {e}", False
 
         if response.status_code != 200:
-            logger.error(f"Error in get_sim_jupyter_mode_result: {response.status_code}\npayload: {payload}\nresponse: {response.text}")
+            if self.tool_logger:
+                self.tool_logger.error(f"Error in get_sim_jupyter_mode_result: {response.status_code}\npayload: {payload}\nresponse: {response.text}")
             try:
                 response_json = response.json()
                 error_message = response_json["error_message"]
@@ -467,7 +486,8 @@ class SandboxFusionTool(BaseTool):
                     return ret_str, is_success
                 else:
                     error_msg = f"Unknown execution status: {execution_status}"
-                    logger.error(f"{error_msg}\nresponse: {response.text}")
+                    if self.tool_logger:
+                        self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
                     return error_msg, False
             elif status == "Failed":
                 execution_status = response_json["run_result"]["status"]
@@ -479,7 +499,8 @@ class SandboxFusionTool(BaseTool):
                         ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
                     if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
                         ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
-                    logger.warning(f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, payload: {payload}, response: {response.text}")
+                    if self.tool_logger:
+                        self.tool_logger.warning(f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, payload: {payload}, response: {response.text}")
                     return ret_str, False
                 elif execution_status == "Finished":
                     # Failed status with Finished execution means non-zero return code
@@ -494,18 +515,22 @@ class SandboxFusionTool(BaseTool):
                     return ret_str, False
                 else:
                     error_msg = f"Unknown execution status: {execution_status}"
-                    logger.error(f"{error_msg}\nresponse: {response.text}")
+                    if self.tool_logger:
+                        self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
                     return error_msg, False
             elif status == "SandboxError":
                 error_msg = f"Sandbox error: {response.text}"
-                logger.error(error_msg)
+                if self.tool_logger:
+                    self.tool_logger.error(error_msg)
                 return error_msg, False
             else:
                 error_msg = f"Unknown response status: {status}"
-                logger.error(f"{error_msg}\nresponse: {response.text}")
+                if self.tool_logger:
+                    self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
                 return error_msg, False
         except Exception as e:
-            logger.error(f"Error in get_sim_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
+            if self.tool_logger:
+                self.tool_logger.error(f"Error in get_sim_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
             return f"Error in calling code interpreter: {response.text}", False
 
     async def calc_reward(self, instance_id: str, **kwargs) -> str:

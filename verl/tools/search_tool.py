@@ -14,8 +14,6 @@
 # limitations under the License.
 
 import json
-import logging
-import os
 import threading
 from contextlib import ExitStack
 from enum import Enum
@@ -29,9 +27,6 @@ from verl.tools.utils.search_r1_like_utils import perform_single_search_batch
 
 from .base_tool import BaseTool
 from .schemas import OpenAIFunctionToolSchema
-
-logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 T = TypeVar("T")
 
@@ -92,9 +87,10 @@ class SearchExecutionWorker:
                 ray.get(self.rate_limit_worker.acquire.remote())
                 try:
                     return fn(*fn_args, **fn_kwargs)
-                except Exception as e:
+                except Exception:
                     # TODO we should make this available to the tool caller
-                    logger.warning(f"Error when executing search: {e}")
+                    # Error logging is handled by BaseTool universal logging
+                    pass
         else:
             return fn(*fn_args, **fn_kwargs)
 
@@ -167,7 +163,8 @@ class SearchTool(BaseTool):
         if self.retrieval_service_url == "":
             raise ValueError("retrieval_service_url is not set")
 
-        logger.info(f"Initialized SearchTool with config: {config}")
+        if self.tool_logger:
+            self.tool_logger.info(f"Initialized SearchTool with config: {config}")
 
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         """Return the OpenAI tool schema."""
@@ -210,7 +207,8 @@ class SearchTool(BaseTool):
             concurrent_semaphore=None,  # Ray handles concurrency control
             timeout=timeout,
         )
-        logger.debug(f"Search result for instance {instance_id}: {result_text}")
+        if self.tool_logger:
+            self.tool_logger.debug(f"Search result for instance {instance_id}: {result_text}")
         return result_text, metadata
 
     async def _execute_impl(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, bool, dict[str, Any]]:
@@ -230,7 +228,8 @@ class SearchTool(BaseTool):
 
         if not query_list_from_params or not isinstance(query_list_from_params, list):
             error_msg = "Error: 'query_list' is missing, empty, or not a list in parameters."
-            logger.error(f"[SearchTool] {error_msg} Received parameters: {parameters}")
+            if self.tool_logger:
+                self.tool_logger.error(f"[SearchTool] {error_msg} Received parameters: {parameters}")
             return json.dumps({"result": error_msg}), 0.0, False, {}
 
         # Execute search using Ray execution pool
@@ -240,26 +239,18 @@ class SearchTool(BaseTool):
             # Store results in instance dictionary
             self._instance_dict[instance_id]["reward"].append(result_text.strip())
 
-            # Convert metadata to metrics
-            metrics = {"query_count": metadata.get("query_count", 0), "status": metadata.get("status", "unknown"), "total_results": metadata.get("total_results", 0), "api_request_error": metadata.get("api_request_error")}
-
             # Tool-specific metrics (convert from existing metrics)
-            specific_metrics = {
-                "query_count": metadata.get("query_count", 0),
-                "total_results": metadata.get("total_results", 0),
-                "api_status": metadata.get("status", "unknown"),
-                "queries": query_list_from_params
-            }
-            
+            specific_metrics = {"query_count": metadata.get("query_count", 0), "total_results": metadata.get("total_results", 0), "api_status": metadata.get("status", "unknown"), "queries": query_list_from_params}
+
             # Determine success based on API status and results
-            success = (metadata.get("status") == "success" and 
-                      metadata.get("total_results", 0) > 0)
-            
+            success = metadata.get("status") == "success" and metadata.get("total_results", 0) > 0
+
             return result_text, 0.0, success, specific_metrics
 
         except Exception as e:
             error_result = json.dumps({"result": f"Search execution failed: {e}"})
-            logger.error(f"[SearchTool] Execution failed: {e}")
+            if self.tool_logger:
+                self.tool_logger.error(f"[SearchTool] Execution failed: {e}")
             specific_metrics = {"error": str(e), "query_count": 0}
             return error_result, 0.0, False, specific_metrics
 

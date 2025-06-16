@@ -19,3 +19,10 @@ actor_rollout_ref:
     multi_turn:
       enable: True
       max_assistant_turns: 20
+
+trainer:
+  log_val_generations: 20
+  rollout_data_dir: /data/tensorboard/rollout
+  validation_data_dir: /data/tensorboard/validation
+  tool_logging:
+    log_dir: /data/tensorboard/tool_logs
