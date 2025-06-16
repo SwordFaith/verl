@@ -10,7 +10,7 @@ ulimit -n 65535
 EXPERIMENT_NAME=retool-multiturn-sft-qwen2.5-32b-sp8
 
 HOME=/wuxi_gpfs/user/longxiang1
-torchrun --nnodes=4 --nproc_per_node=8 \
+torchrun --nnodes=${WORLD_SIZE} --nproc_per_node=8 --node_rank=${RANK} \
      -m verl.trainer.fsdp_sft_trainer \
     data.max_length=16384 \
     data.train_batch_size=128 \
