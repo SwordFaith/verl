@@ -789,13 +789,13 @@ class SGLangRollout(BaseRollout):
                     for tool_call in parsed_tool_calls:
                         # Call simplified tool execution
                         response, reward, execution_info = await self._tool_map[tool_call.function.name].execute(
-                            tool_call.id,  # Use tool_call.id as instance_id
+                            _req.request_id,  # Use request_id as instance_id to match creation
                             tool_call.function.arguments,
                             **_req.tools_kwargs[tool_call.function.name].get("execute_kwargs", {}),
                         )
 
                         # Assemble ToolMetrics at rollout layer
-                        tool_metrics_data = self._assemble_tool_metrics(tool_name=tool_call.function.name, instance_id=tool_call.id, response=response, reward=reward, execution_info=execution_info, req=_req, tool_calls_per_turn=len(parsed_tool_calls))
+                        tool_metrics_data = self._assemble_tool_metrics(tool_name=tool_call.function.name, instance_id=_req.request_id, response=response, reward=reward, execution_info=execution_info, req=_req, tool_calls_per_turn=len(parsed_tool_calls))
 
                         # Store assembled results (response, reward, tool_metrics)
                         tool_call_results.append((response, reward, tool_metrics_data))
