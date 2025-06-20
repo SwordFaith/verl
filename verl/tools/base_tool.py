@@ -30,6 +30,8 @@ from omegaconf import OmegaConf
 
 from .schemas import OpenAIFunctionToolSchema
 
+# Removed ToolMetrics dependency - moved to rollout layer
+
 
 class AdvancedNoiseFilter(logging.Filter):
     """Advanced noise filter that supports different actions for different output targets."""
@@ -416,58 +418,71 @@ class BaseTool:
             return instance_id
 
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, Dict[str, Any]]:
-        """Enhanced execute method with integrated tool logging.
+        """Simplified execute method returning basic execution info instead of full ToolMetrics.
 
         Args:
             instance_id: The instance id of the tool.
-            parameters: The json string of the parameters of the tool.
+            parameters: The tool parameters dictionary.
+            **kwargs: Optional execution parameters (no rollout context required).
 
-        Returns: tool_response, tool_reward_score, tool_metrics
+        Returns: tool_response, tool_reward_score, execution_info
             tool_response: The response str of the tool.
             tool_reward_score: The step reward score of the tool.
-            tool_metrics: The metrics of the tool.
+            execution_info: Basic execution information for rollout-level ToolMetrics assembly.
         """
         start_time = time.time()
 
-        # Log execution start
+        # Log execution start (if logger available)
         if self.tool_logger:
             self.tool_logger.info("EXECUTION_START", {"instance_id": instance_id, "parameters_size": len(str(parameters)), "tool_class": self.__class__.__name__})
 
         try:
-            response, reward, success, specific_metrics = await self._execute_impl(instance_id, parameters, **kwargs)
+            response, reward, success, tool_specific_info = await self._execute_impl(instance_id, parameters, **kwargs)
             end_time = time.time()
 
-            # Collect base tool metrics
-            base_metrics = {
+            # Return simplified execution info (no rollout context required)
+            execution_info = {
+                "success": success,
                 "latency_ms": (end_time - start_time) * 1000,
                 "response_char_length": len(response) if response else 0,
-                "success": success,
-                "tool_name": self.name,
+                "tool_specific_metrics": tool_specific_info or {},
+                "error_type": tool_specific_info.get("error_type") if not success else None,
             }
-
-            # Combine base metrics with tool-specific metrics
-            combined_metrics = {"base_metrics": base_metrics, "specific_metrics": specific_metrics or {}}
 
             # Log execution result
             if self.tool_logger:
                 log_level = "info" if success else "warning"
 
                 # Check if this is a noise error (timeout, etc.)
-                if not success and self._is_noise_error(response, specific_metrics):
+                if not success and self._is_noise_error(response, tool_specific_info):
                     log_level = "debug"  # Will be handled by noise filter
 
-                self.tool_logger.log(log_level, "EXECUTION_COMPLETE", {"instance_id": instance_id, "success": success, "latency_ms": base_metrics["latency_ms"], "response_preview": response[:200] if response else None, "metrics": combined_metrics})
+                self.tool_logger.log(
+                    log_level,
+                    "EXECUTION_COMPLETE",
+                    {
+                        "instance_id": instance_id,
+                        "success": success,
+                        "latency_ms": execution_info["latency_ms"],
+                        "response_preview": response[:200] if response else None,
+                        "execution_info": {k: v for k, v in execution_info.items() if k != "tool_specific_metrics"},  # Exclude large nested data
+                    },
+                )
 
-            return response, reward, combined_metrics
+            return response, reward, execution_info
 
         except Exception as e:
             end_time = time.time()
 
-            # Log exception
-            if self.tool_logger:
-                self.tool_logger.error("EXECUTION_EXCEPTION", {"instance_id": instance_id, "exception": str(e), "exception_type": type(e).__name__, "latency_ms": (end_time - start_time) * 1000})
+            # Create execution info for exception case
+            execution_info = {"success": False, "latency_ms": (end_time - start_time) * 1000, "error_type": "execution_exception", "exception_message": str(e), "response_char_length": 0, "tool_specific_metrics": {}}
 
-            raise
+            # Log exception with context
+            if self.tool_logger:
+                self.tool_logger.error("EXECUTION_EXCEPTION", {"instance_id": instance_id, "exception": str(e), "exception_type": type(e).__name__, "latency_ms": execution_info["latency_ms"]})
+
+            # Re-raise with execution_info available in context
+            raise e
 
     def _is_noise_error(self, response: str, metrics: dict) -> bool:
         """Check if this is a noise error (timeout, retryable error, etc.)."""

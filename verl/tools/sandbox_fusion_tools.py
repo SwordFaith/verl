@@ -20,7 +20,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from enum import Enum
-from typing import Any, Callable, Optional, Tuple, TypeVar
+from typing import Any, Callable, List, Optional, Tuple, TypeVar
 from uuid import uuid4
 
 import ray
@@ -183,7 +183,7 @@ class SandboxFusionTool(BaseTool):
         if not isinstance(code, str):
             code = str(code)
 
-        # TODO: better documentation for the code
+        # Normalize code
         code = code.rstrip("\n ")
         if len(code) > 0:
             if self.mode in ["run_jupyter", "sim_jupyter"]:
@@ -191,22 +191,155 @@ class SandboxFusionTool(BaseTool):
         else:
             if self.tool_logger:
                 self.tool_logger.error(f"no code parsed, instance_id: {instance_id}, parameters: {parameters}")
-            return "no code parsed", 0.0, False, {}
+
+            # Enhanced error metrics for empty code (using line-based primary metrics)
+            specific_metrics = {
+                # === Primary Code Metrics ===
+                "lines_of_code": 0,  # PRIMARY METRIC
+                "total_lines": 0,
+                "code_density": 0.0,
+                "avg_line_length": 0.0,
+                # === Secondary Code Metrics ===
+                "code_char_len": 0,  # SECONDARY
+                "effective_char_len": 0,
+                "response_char_len": 0,
+                # === Execution Context ===
+                "execution_mode": self.mode,
+                "language": language,
+                "timeout_used": timeout,
+                # === Code Structure Analysis ===
+                "code_complexity_score": 0.0,
+                "control_structure_lines": 0,
+                "function_definition_lines": 0,
+                "import_lines": 0,
+                "comment_lines": 0,
+                # === Code Content Flags ===
+                "contains_imports": False,
+                "contains_loops": False,
+                "contains_functions": False,
+                "contains_classes": False,
+                "contains_conditionals": False,
+                "contains_exception_handling": False,
+                # === Performance Metrics ===
+                "total_execution_time_ms": 0.0,
+                "compilation_time_ms": 0.0,
+                "runtime_duration_ms": 0.0,
+                "memory_usage_mb": 0.0,
+                # === Error Classification ===
+                "error_type": "empty_code",
+                "api_status": "parameter_error",
+                "retry_count": 0,
+            }
+            return "no code parsed", 0.0, False, specific_metrics
+
+        # Time the execution for enhanced metrics
+        execution_start_time = time.time()
 
         # Execute code based on mode and get both result and success status
         if self.mode == "run_jupyter":
-            result, success = await self.execution_pool.execute.remote(self.get_jupyter_mode_result, instance_id, timeout)
+            result, success, execution_metadata = await self.execution_pool.execute.remote(self.get_jupyter_mode_result_enhanced, instance_id, timeout)
         elif self.mode == "run_code":
-            result, success = await self.execution_pool.execute.remote(self.execute_code, instance_id, code, timeout, language)
+            result, success, execution_metadata = await self.execution_pool.execute.remote(self.execute_code_enhanced, instance_id, code, timeout, language)
         elif self.mode == "sim_jupyter":
-            result, success = await self.execution_pool.execute.remote(self.get_sim_jupyter_mode_result, instance_id, timeout)
+            result, success, execution_metadata = await self.execution_pool.execute.remote(self.get_sim_jupyter_mode_result_enhanced, instance_id, timeout)
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
 
-        # Tool-specific metrics
-        specific_metrics = {"code_char_len": len(code), "execution_mode": self.mode, "language": language, "timeout_used": timeout, "response_char_len": len(result) if isinstance(result, str) else 0}
+        execution_end_time = time.time()
+
+        # Calculate detailed code metrics (prioritize lines_of_code as primary metric)
+        code_lines = [line for line in code.split("\n") if line.strip()]
+        effective_lines_count = len(code_lines)
+        total_lines_count = len(code.split("\n"))
+
+        # Enhanced tool-specific metrics for code execution (lines_of_code as primary metric)
+        specific_metrics = {
+            # === Primary Code Metrics (lines-based analysis) ===
+            "lines_of_code": effective_lines_count,  # PRIMARY METRIC: non-empty lines
+            "total_lines": total_lines_count,  # Total lines including empty ones
+            "code_density": effective_lines_count / total_lines_count if total_lines_count > 0 else 0,
+            "avg_line_length": sum(len(line) for line in code_lines) / effective_lines_count if effective_lines_count > 0 else 0,
+            # === Secondary Code Metrics (character-based for reference) ===
+            "code_char_len": len(code),  # SECONDARY: kept for backward compatibility
+            "effective_char_len": sum(len(line.strip()) for line in code_lines),  # Characters in non-empty lines
+            "response_char_len": len(result) if isinstance(result, str) else 0,
+            # === Execution Context ===
+            "execution_mode": self.mode,
+            "language": language,
+            "timeout_used": timeout,
+            # === Code Structure Analysis (line-based) ===
+            "code_complexity_score": self._calculate_code_complexity_by_lines(code_lines),
+            "control_structure_lines": self._count_control_structure_lines(code_lines),
+            "function_definition_lines": self._count_function_definition_lines(code_lines),
+            "import_lines": self._count_import_lines(code_lines),
+            "comment_lines": self._count_comment_lines(code_lines),
+            # === Code Content Flags (boolean indicators) ===
+            "contains_imports": any("import " in line or "from " in line for line in code_lines),
+            "contains_loops": any(keyword in line for line in code_lines for keyword in ["for ", "while "]),
+            "contains_functions": any(keyword in line for line in code_lines for keyword in ["def ", "lambda "]),
+            "contains_classes": any("class " in line for line in code_lines),
+            "contains_conditionals": any(keyword in line for line in code_lines for keyword in ["if ", "elif ", "else:"]),
+            "contains_exception_handling": any(keyword in line for line in code_lines for keyword in ["try:", "except:", "finally:"]),
+            # === Execution Performance Metrics ===
+            "total_execution_time_ms": (execution_end_time - execution_start_time) * 1000,
+            "compilation_time_ms": execution_metadata.get("compilation_time_ms", 0.0),
+            "runtime_duration_ms": execution_metadata.get("runtime_duration_ms", 0.0),
+            "memory_usage_mb": execution_metadata.get("memory_usage_mb", 0.0),
+            # === Execution Results Analysis ===
+            "exit_code": execution_metadata.get("exit_code"),
+            "has_stdout": bool(execution_metadata.get("stdout")),
+            "has_stderr": bool(execution_metadata.get("stderr")),
+            "output_type": execution_metadata.get("output_type", "text"),
+            # === Error Classification ===
+            "error_type": execution_metadata.get("error_type") if not success else None,
+            "api_status": execution_metadata.get("api_status", "unknown"),
+            "retry_count": execution_metadata.get("retry_count", 0),
+        }
 
         return result, 0.0, success, specific_metrics
+
+    def _calculate_code_complexity_by_lines(self, code_lines: List[str]) -> float:
+        """Calculate complexity score based on effective lines of code."""
+        if not code_lines:
+            return 0.0
+
+        complexity_score = 0.0
+        effective_lines = len(code_lines)
+
+        # Base complexity from effective line count (higher weight)
+        complexity_score += min(effective_lines / 30.0, 1.0) * 0.25
+
+        # Control structures complexity (per line analysis)
+        control_count = self._count_control_structure_lines(code_lines)
+        complexity_score += min(control_count / 8.0, 1.0) * 0.30
+
+        # Function/class definitions complexity
+        def_count = self._count_function_definition_lines(code_lines)
+        complexity_score += min(def_count / 4.0, 1.0) * 0.25
+
+        # Import complexity (library dependencies)
+        import_count = self._count_import_lines(code_lines)
+        complexity_score += min(import_count / 8.0, 1.0) * 0.20
+
+        return min(complexity_score, 1.0)  # Cap at 1.0
+
+    def _count_control_structure_lines(self, code_lines: List[str]) -> int:
+        """Count lines containing control structures."""
+        control_keywords = ["if ", "elif ", "else:", "for ", "while ", "try:", "except:", "finally:", "with "]
+        return sum(1 for line in code_lines for keyword in control_keywords if keyword in line.strip())
+
+    def _count_function_definition_lines(self, code_lines: List[str]) -> int:
+        """Count lines with function or class definitions."""
+        definition_keywords = ["def ", "class ", "lambda "]
+        return sum(1 for line in code_lines for keyword in definition_keywords if keyword in line.strip())
+
+    def _count_import_lines(self, code_lines: List[str]) -> int:
+        """Count lines with import statements."""
+        return sum(1 for line in code_lines if "import " in line.strip() or "from " in line.strip())
+
+    def _count_comment_lines(self, code_lines: List[str]) -> int:
+        """Count lines that are primarily comments."""
+        return sum(1 for line in code_lines if line.strip().startswith("#"))
 
     def execute_code(self, instance_id, code, timeout=30, language="python"):
         max_retries = 3

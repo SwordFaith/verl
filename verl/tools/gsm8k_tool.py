@@ -73,22 +73,69 @@ class Gsm8kTool(BaseTool):
         if not isinstance(answer, str):
             answer = str(answer)
 
-        if answer.startswith("#### "):
-            self._instance_dict[instance_id]["response"] = answer
-        else:
-            self._instance_dict[instance_id]["response"] = "#### " + answer
+        # Format answer with required prefix
+        formatted_answer = answer if answer.startswith("#### ") else "#### " + answer
+        self._instance_dict[instance_id]["response"] = formatted_answer
 
-        reward = await self.calc_reward(instance_id)
-        # penalty for non improved answer submission
-        tool_reward = 0.0 if reward > self._instance_dict[instance_id]["reward"] else -0.05
-        # update the reward
-        self._instance_dict[instance_id]["reward"] = reward
+        # Calculate reward and improvement
+        new_reward = await self.calc_reward(instance_id)
+        previous_reward = self._instance_dict[instance_id]["reward"]
+        answer_improved = new_reward > previous_reward
 
-        # Tool-specific metrics
-        specific_metrics = {"parsed_answer": answer, "ground_truth": self._instance_dict[instance_id]["ground_truth"], "answer_improvement": reward > self._instance_dict[instance_id]["reward"], "current_reward": reward}
+        # Apply penalty for non-improved answer submission
+        tool_reward = 0.0 if answer_improved else -0.05
 
-        success = reward > 0  # Consider successful if reward is positive
-        return f"Current parsed {answer=} {reward=}", tool_reward, success, specific_metrics
+        # Update stored reward
+        self._instance_dict[instance_id]["reward"] = new_reward
+
+        # Enhanced tool-specific metrics for mathematical problem solving
+        specific_metrics = {
+            # Basic answer tracking
+            "parsed_answer": answer,
+            "formatted_answer": formatted_answer,
+            "ground_truth": self._instance_dict[instance_id]["ground_truth"],
+            # Reward and improvement tracking
+            "current_reward": new_reward,
+            "previous_reward": previous_reward,
+            "answer_improvement": answer_improved,
+            "reward_delta": new_reward - previous_reward,
+            # Mathematical analysis metrics
+            "solution_step_count": len(answer.split("\n")) if answer else 0,
+            "answer_char_length": len(answer),
+            "contains_calculation": any(op in answer for op in ["+", "-", "*", "/", "=", "$"]),
+            "answer_format_correct": answer.startswith("#### ") or formatted_answer.startswith("#### "),
+            # Error classification if not successful
+            "error_type": None if new_reward > 0 else self._classify_answer_error(answer, self._instance_dict[instance_id]["ground_truth"]),
+        }
+
+        success = new_reward > 0  # Consider successful if reward is positive
+        response_text = f"Current parsed answer='{answer}' reward={new_reward} improved={answer_improved}"
+
+        return response_text, tool_reward, success, specific_metrics
+
+    def _classify_answer_error(self, answer: str, ground_truth: str) -> str:
+        """Classify the type of error in the mathematical answer."""
+        if not answer or answer.strip() == "":
+            return "empty_answer"
+
+        if not answer.startswith("#### "):
+            return "format_error"
+
+        # Extract numerical answer
+        try:
+            answer_num = answer.replace("#### ", "").strip()
+            if not answer_num:
+                return "no_numerical_answer"
+
+            # Try to parse as number
+            try:
+                float(answer_num.replace(",", "").replace("$", ""))
+                return "wrong_calculation"  # Format is correct but value is wrong
+            except ValueError:
+                return "non_numerical_answer"  # Contains non-numeric content
+
+        except Exception:
+            return "parsing_error"
 
     async def calc_reward(self, instance_id: str, **kwargs) -> float:
         return gsm8k.compute_score(

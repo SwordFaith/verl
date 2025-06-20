@@ -15,6 +15,7 @@
 
 import json
 import threading
+import time
 from contextlib import ExitStack
 from enum import Enum
 from typing import Any, Callable, Optional, Tuple, TypeVar
@@ -212,16 +213,17 @@ class SearchTool(BaseTool):
         return result_text, metadata
 
     async def _execute_impl(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, bool, dict[str, Any]]:
-        """Execute the search tool.
+        """Execute the search tool with enhanced metrics collection.
 
         Args:
             instance_id: The instance ID of the tool
             parameters: Tool parameters containing query_list and optional timeout
 
-        Returns: tool_response, tool_reward_score, tool_metrics
+        Returns: tool_response, tool_reward_score, success, tool_specific_metrics
             tool_response: The response str of the tool.
             tool_reward_score: The step reward score of the tool.
-            tool_metrics: The metrics of the tool.
+            success: Whether the execution was successful.
+            tool_specific_metrics: Enhanced search performance metrics.
         """
         timeout = self.timeout
         query_list_from_params = parameters.get("query_list")
@@ -230,17 +232,43 @@ class SearchTool(BaseTool):
             error_msg = "Error: 'query_list' is missing, empty, or not a list in parameters."
             if self.tool_logger:
                 self.tool_logger.error(f"[SearchTool] {error_msg} Received parameters: {parameters}")
-            return json.dumps({"result": error_msg}), 0.0, False, {}
 
-        # Execute search using Ray execution pool
+            # Enhanced error metrics
+            specific_metrics = {"error_type": "invalid_parameters", "query_count": 0, "total_results": 0, "search_latency_ms": 0.0, "api_status": "parameter_error", "queries": [], "query_complexity_scores": [], "relevance_scores": []}
+            return json.dumps({"result": error_msg}), 0.0, False, specific_metrics
+
+        # Execute search using Ray execution pool with timing
+        search_start_time = time.time()
         try:
             result_text, metadata = await self.execution_pool.execute.remote(self.execute_search, instance_id, query_list_from_params, self.retrieval_service_url, self.topk, timeout)
+            search_end_time = time.time()
 
             # Store results in instance dictionary
             self._instance_dict[instance_id]["reward"].append(result_text.strip())
 
-            # Tool-specific metrics (convert from existing metrics)
-            specific_metrics = {"query_count": metadata.get("query_count", 0), "total_results": metadata.get("total_results", 0), "api_status": metadata.get("status", "unknown"), "queries": query_list_from_params}
+            # Enhanced tool-specific metrics for search performance
+            specific_metrics = {
+                # Basic search metrics
+                "query_count": metadata.get("query_count", len(query_list_from_params)),
+                "total_results": metadata.get("total_results", 0),
+                "api_status": metadata.get("status", "unknown"),
+                "queries": query_list_from_params,
+                # Performance metrics
+                "search_latency_ms": (search_end_time - search_start_time) * 1000,
+                "avg_latency_per_query_ms": ((search_end_time - search_start_time) * 1000) / len(query_list_from_params) if query_list_from_params else 0,
+                "timeout_used": timeout,
+                "rate_limit_enabled": self.enable_global_rate_limit,
+                # Query analysis metrics
+                "query_complexity_scores": [self._calculate_query_complexity(q) for q in query_list_from_params],
+                "avg_query_length": sum(len(q) for q in query_list_from_params) / len(query_list_from_params) if query_list_from_params else 0,
+                "unique_query_ratio": len(set(query_list_from_params)) / len(query_list_from_params) if query_list_from_params else 0,
+                # Results analysis
+                "results_per_query": metadata.get("total_results", 0) / len(query_list_from_params) if query_list_from_params else 0,
+                "relevance_scores": metadata.get("relevance_scores", []),
+                "result_char_length": len(result_text) if result_text else 0,
+                # Error tracking
+                "error_type": None,
+            }
 
             # Determine success based on API status and results
             success = metadata.get("status") == "success" and metadata.get("total_results", 0) > 0
@@ -248,11 +276,64 @@ class SearchTool(BaseTool):
             return result_text, 0.0, success, specific_metrics
 
         except Exception as e:
+            search_end_time = time.time()
             error_result = json.dumps({"result": f"Search execution failed: {e}"})
+
             if self.tool_logger:
                 self.tool_logger.error(f"[SearchTool] Execution failed: {e}")
-            specific_metrics = {"error": str(e), "query_count": 0}
+
+            # Enhanced error metrics
+            specific_metrics = {
+                "error_type": self._classify_search_error(e),
+                "exception_details": str(e),
+                "query_count": len(query_list_from_params) if query_list_from_params else 0,
+                "total_results": 0,
+                "search_latency_ms": (search_end_time - search_start_time) * 1000,
+                "api_status": "execution_error",
+                "queries": query_list_from_params if query_list_from_params else [],
+                "query_complexity_scores": [],
+                "relevance_scores": [],
+            }
             return error_result, 0.0, False, specific_metrics
+
+    def _calculate_query_complexity(self, query: str) -> float:
+        """Calculate complexity score for a search query."""
+        if not query:
+            return 0.0
+
+        # Simple complexity scoring based on query characteristics
+        complexity_score = 0.0
+
+        # Length factor (normalized)
+        complexity_score += min(len(query) / 100.0, 1.0) * 0.3
+
+        # Word count factor
+        word_count = len(query.split())
+        complexity_score += min(word_count / 20.0, 1.0) * 0.3
+
+        # Special characters/operators factor
+        special_chars = ['"', "'", "(", ")", "AND", "OR", "NOT", "+", "-"]
+        special_count = sum(1 for char in special_chars if char in query.upper())
+        complexity_score += min(special_count / 5.0, 1.0) * 0.4
+
+        return min(complexity_score, 1.0)  # Cap at 1.0
+
+    def _classify_search_error(self, exception: Exception) -> str:
+        """Classify the type of search error."""
+        error_str = str(exception).lower()
+
+        if "timeout" in error_str or "time" in error_str:
+            return "timeout_error"
+        elif "connection" in error_str or "network" in error_str:
+            return "network_error"
+        elif "rate" in error_str or "limit" in error_str:
+            return "rate_limit_error"
+        elif "permission" in error_str or "auth" in error_str:
+            return "authentication_error"
+        elif "not found" in error_str or "404" in error_str:
+            return "service_not_found"
+        else:
+            return "unknown_execution_error"
 
     async def calc_reward(self, instance_id: str, **kwargs) -> str:
         return self._instance_dict[instance_id]["reward"]

@@ -23,7 +23,7 @@ import time
 from contextlib import contextmanager
 from copy import deepcopy
 from json import JSONDecodeError
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from uuid import uuid4
 
 import numpy as np
@@ -63,6 +63,9 @@ from verl.tools.schemas import (
     OpenAIFunctionToolCall,
 )
 from verl.utils.debug import GPUMemoryLogger
+from verl.utils.metric.schemas import (
+    ConversationMetrics,
+)
 from verl.utils.net_utils import is_ipv6
 from verl.utils.torch_functional import (
     get_response_mask,
@@ -518,6 +521,45 @@ class SGLangRollout(BaseRollout):
             for key, value in old_sampling_params_args.items():
                 self.sampling_params[key] = value
 
+    def _assemble_tool_metrics(self, tool_name: str, instance_id: str, response: str, reward: float, execution_info: dict[str, Any], req: AsyncRolloutRequest, tool_calls_per_turn: int) -> dict[str, Any]:
+        """Assemble complete ToolMetrics from tool execution info + rollout context.
+
+        Args:
+            tool_name: Name of the executed tool
+            instance_id: Tool instance identifier
+            response: Tool response string
+            reward: Tool reward score
+            execution_info: Basic execution information from tool
+            req: AsyncRolloutRequest with rollout context
+            tool_calls_per_turn: Number of tool calls in current turn
+
+        Returns:
+            Complete ToolMetrics data dictionary for rollout-level assembly
+        """
+        # Calculate trajectory-level tool calls count
+        trajectory_tool_calls = sum(len(req.metrics.get(tool, [])) for tool in req.metrics.keys() if tool not in ["turn_stats", "token_stats"]) + 1  # +1 for current call
+
+        # Assemble standardized ToolMetrics data
+        return {
+            # Request context (from rollout layer)
+            "request_id": req.request_id,
+            "batch_data_id": req.batch_data_id,
+            "rollout_offset": req.rollout_offset,
+            "timestamp": time.time(),
+            # Tool execution context
+            "tool_name": tool_name,
+            "instance_id": instance_id,
+            # Execution metrics (from tool)
+            "latency_ms": execution_info["latency_ms"],
+            "success": execution_info["success"],
+            "response_char_length": execution_info["response_char_length"],
+            "error_type": execution_info.get("error_type"),
+            "tool_specific_metrics": execution_info.get("tool_specific_metrics", {}),
+            # Tool chain context (from rollout)
+            "tool_calls_per_trajectory": trajectory_tool_calls,
+            "tool_calls_per_turn": tool_calls_per_turn,
+        }
+
     @GPUMemoryLogger(role="sglang rollout", logger=logger)
     @torch.no_grad()
     def generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
@@ -790,32 +832,38 @@ class SGLangRollout(BaseRollout):
                     tool_call_results = []
                     last_content_len = 0
                     for tool_call in parsed_tool_calls:
-                        tool_call_results.append(
-                            await self._tool_map[tool_call.function.name].execute(
-                                _req.request_id,
-                                tool_call.function.arguments,
-                                **_req.tools_kwargs[tool_call.function.name].get("execute_kwargs", {}),
-                            )
+                        # Call simplified tool execution
+                        response, reward, execution_info = await self._tool_map[tool_call.function.name].execute(
+                            tool_call.id,  # Use tool_call.id as instance_id
+                            tool_call.function.arguments,
+                            **_req.tools_kwargs[tool_call.function.name].get("execute_kwargs", {}),
                         )
-                        tool_call_responses.append(tool_call_results[-1][0])
+
+                        # Assemble ToolMetrics at rollout layer
+                        tool_metrics_data = self._assemble_tool_metrics(tool_name=tool_call.function.name, instance_id=tool_call.id, response=response, reward=reward, execution_info=execution_info, req=_req, tool_calls_per_turn=len(parsed_tool_calls))
+
+                        # Store assembled results (response, reward, tool_metrics)
+                        tool_call_results.append((response, reward, tool_metrics_data))
+                        tool_call_responses.append(response)
+
                         is_tool_call_overlong, content_len = _req.check_if_tool_response_messages_overlong(self.tokenizer, tool_call_responses)
                         turn_stats = {
                             "token_count": content_len - last_content_len,
                             "char_count": len(tool_call_responses[-1]),
-                            "tool_count": 1,
+                            "tool_calls_count": 1,
                         }
                         last_content_len = content_len
-                        _req.track_conversation_turn_from_stats("tool", turn_stats)
-                        _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
+                        _req.track_turn("tool", turn_stats)
                         if is_tool_call_overlong:
                             is_tool_call_overlong = True
                             break
-                    # update tool metrics
+
+                    # Update tool metrics using assembled ToolMetrics data
                     for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
                         _req.update_metrics(metrics, tool_call.function.name)
                     if is_tool_call_overlong or len(_req.input_ids) >= self.config.max_model_len:
                         finish_reason_type = FinishReasonTypeEnum.LENGTH
-                        _req.set_termination_reason("max_tokens")
+                        _req.termination_reason = "max_tokens"
                         break
                     _req.state = AsyncRolloutRequestStateEnum.RUNNING
                 else:
@@ -825,7 +873,7 @@ class SGLangRollout(BaseRollout):
                 # since SGLang raises an error when max_new_tokens + 1 is greater to max_model_len (the extra token accounts for the EOS token).
                 if len(_req.get_generation_prompt_ids(self.tokenizer)) + 1 >= self.config.max_model_len:
                     finish_reason_type = FinishReasonTypeEnum.LENGTH
-                    _req.set_termination_reason("max_tokens")
+                    _req.termination_reason = "max_tokens"
                     break
                 output = await self._handle_engine_call(_req, request_sampling_params)
                 content = output["text"]
@@ -833,9 +881,8 @@ class SGLangRollout(BaseRollout):
                 current_turns += 1
                 if finish_reason_type == FinishReasonTypeEnum.LENGTH:
                     turn_stats = _req.add_assistant_message(self.tokenizer, content)
-                    _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
-                    _req.track_conversation_turn_from_stats("assistant", turn_stats)
-                    _req.set_termination_reason("max_tokens")
+                    _req.track_turn("assistant", turn_stats)
+                    _req.termination_reason = "max_tokens"
                     break
                 else:
                     if self._function_call_parser and self._function_call_parser.has_tool_call(content):
@@ -890,26 +937,23 @@ class SGLangRollout(BaseRollout):
                             _req.tool_truncation_metrics.append(truncation_metrics)
                         if len(parsed_tool_calls) > 0:
                             turn_stats = _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
-                            _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
-                            _req.track_conversation_turn_from_stats("assistant", turn_stats)
+                            _req.track_turn("assistant", turn_stats)
                         else:
                             turn_stats = _req.add_assistant_message(self.tokenizer, content)
-                            _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
-                            _req.track_conversation_turn_from_stats("assistant", turn_stats)
+                            _req.track_turn("assistant", turn_stats)
                             finish_reason_type = FinishReasonTypeEnum.STOP
                             _req.state = AsyncRolloutRequestStateEnum.COMPLETED
-                            _req.set_termination_reason("eos_token")
+                            _req.termination_reason = "eos_token"
                             break
                     else:
                         turn_stats = _req.add_assistant_message(self.tokenizer, content)
-                        _req.turn_stats_list.append({"turn_index": len(_req.messages) - 1, "timestamp": time.time(), **turn_stats})
-                        _req.track_conversation_turn_from_stats("assistant", turn_stats)
-                        _req.set_termination_reason("eos_token")
+                        _req.track_turn("assistant", turn_stats)
+                        _req.termination_reason = "eos_token"
                         break
 
         if current_turns >= self.config.multi_turn.max_turns:
             finish_reason_type = FinishReasonTypeEnum.STOP
-            _req.set_termination_reason("max_assistant_turns")
+            _req.termination_reason = "max_assistant_turns"
 
         # Calculate the reward for each tool
         async def calc_reward_and_release_fn(name: str, tool: BaseTool):
@@ -1084,34 +1128,29 @@ class SGLangRollout(BaseRollout):
             batch_size=len(sorted_output_req_list),
         )
 
-        # Collect per-request enhanced metrics including conversation and termination
+        # Collect per-request metrics using unified dual-layer architecture
         all_tool_metrics = []
         all_conversation_metrics = []
-        all_termination_metrics = []
-        all_turn_stats = []
 
         for req in sorted_output_req_list:
-            # 收集增强的工具指标
-            enhanced_tool_metrics = req.get_enhanced_tool_metrics()
+            # Convert to standardized ToolMetrics using Pydantic validation
+            tool_metrics_dict = req.get_enhanced_tool_metrics()
+            if tool_metrics_dict:
+                # Add tool truncation metrics if present
+                if req.tool_truncation_metrics:
+                    tool_metrics_dict["tool_truncation_events"] = req.tool_truncation_metrics
+                all_tool_metrics.append(tool_metrics_dict)
 
-            # 收集 tool truncation metrics 并合并到 tool_metrics 中
-            if req.tool_truncation_metrics:
-                # 将 truncation metrics 添加到 enhanced_tool_metrics 中
-                enhanced_tool_metrics["tool_truncation_events"] = req.tool_truncation_metrics
-
-            all_tool_metrics.append(enhanced_tool_metrics)
-
-            # 收集对话指标
-            conversation_metrics = req.get_conversation_metrics()
-            all_conversation_metrics.append(conversation_metrics)
-
-            # 收集终止指标
-            termination_metrics = req.get_termination_metrics()
-            all_termination_metrics.append(termination_metrics)
-
-            # 收集 turn stats
-            turn_stats = getattr(req, "turn_stats_list", [])
-            all_turn_stats.append(turn_stats)
+            # Convert to unified ConversationMetrics (includes termination + turn data)
+            conversation_metrics_dict = req.get_conversation_metrics()
+            if conversation_metrics_dict:
+                try:
+                    conversation_metrics = ConversationMetrics(**conversation_metrics_dict)
+                    all_conversation_metrics.append(conversation_metrics.model_dump())
+                except Exception as e:
+                    # Fallback to dict format if validation fails
+                    logger.warning(f"ConversationMetrics validation failed for request {req.request_id}: {e}, using dict format")
+                    all_conversation_metrics.append(conversation_metrics_dict)
 
         # free cache engine
         if self.config.free_cache_engine and self._engine is not None and self._tp_rank == 0:
@@ -1123,10 +1162,8 @@ class SGLangRollout(BaseRollout):
             non_tensor_batch={
                 "messages": np.array(messages, dtype=object),
                 "reward_scores": np.array(reward_scores, dtype=object),
-                "turn_stats": np.array(all_turn_stats, dtype=object),  # List[List[Dict]] - Keep request boundaries
-                "tool_metrics": np.array(all_tool_metrics, dtype=object),  # Enhanced tool metrics with per-tool breakdown including truncation events
-                "conversation_metrics": np.array(all_conversation_metrics, dtype=object),  # Conversation-level metrics
-                "termination_metrics": np.array(all_termination_metrics, dtype=object),  # Termination-related metrics
+                "tool_metrics": np.array(all_tool_metrics, dtype=object),  # Enhanced tool metrics compatible with verl.utils.metric
+                "conversation_metrics": np.array(all_conversation_metrics, dtype=object),  # Unified conversation metrics (includes termination + turn data)
             },
         )
 
