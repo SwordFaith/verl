@@ -117,10 +117,10 @@ class Tracking:
             self.logger["vemlp_wandb"] = vemlp_wandb
 
         if "tensorboard" in default_backend:
-            self.logger["tensorboard"] = _TensorboardAdapter()
+            self.logger["tensorboard"] = _TensorboardAdapter(project_name, experiment_name)
 
         if "console" in default_backend:
-            from verl.utils.logger.aggregate_logger import LocalLogger
+            from verl.utils.logger import LocalLogger
 
             self.console_logger = LocalLogger(print_to_console=True)
             self.logger["console"] = self.console_logger
@@ -197,12 +197,12 @@ class ClearMLLogger:
 
 
 class _TensorboardAdapter:
-    def __init__(self):
+    def __init__(self, project_name, experiment_name):
         import os
 
         from torch.utils.tensorboard import SummaryWriter
 
-        tensorboard_dir = os.environ.get("TENSORBOARD_DIR", "tensorboard_log")
+        tensorboard_dir = os.environ.get("TENSORBOARD_DIR", f"tensorboard_log/{project_name}/{experiment_name}")
         os.makedirs(tensorboard_dir, exist_ok=True)
         print(f"Saving tensorboard log to {tensorboard_dir}.")
         self.writer = SummaryWriter(tensorboard_dir)
