@@ -55,7 +55,23 @@ class TestAsyncRolloutRequestMetrics:
         if messages is None:
             messages = self.base_messages
 
-        return AsyncRolloutRequest(request_id="test-123", batch_data_id=0, rollout_offset=0, state="completed", messages=messages, max_prompt_len=512, tokenizer=self.mock_tokenizer)
+        return AsyncRolloutRequest(
+            request_id="test-123",
+            batch_data_id=0,
+            rollout_offset=0,
+            state="completed",
+            messages=messages,
+            max_prompt_len=512,
+            tokenizer=self.mock_tokenizer,
+            # Required fields with defaults
+            response_ids=[],
+            response_attention_mask=[],
+            response_position_ids=[],
+            response_loss_mask=[],
+            reward_scores={},
+            use_inference_chat_template=False,
+            enable_tokenization_sanity_check=False,
+        )
 
     def test_unified_turn_tracking(self):
         """Test unified turn tracking functionality."""
@@ -192,7 +208,23 @@ class TestAsyncRolloutRequestMetrics:
         """Test initialization of conversation tracking from prompt messages."""
         messages = [Message(role="system", content="You are a helpful assistant."), Message(role="user", content="Hello world"), Message(role="assistant", content="Hello! How can I help you?", tool_calls=None)]
 
-        request = AsyncRolloutRequest(request_id="test-456", batch_data_id=1, rollout_offset=0, state="pending", messages=messages, max_prompt_len=512, tokenizer=self.mock_tokenizer)
+        request = AsyncRolloutRequest(
+            request_id="test-456",
+            batch_data_id=1,
+            rollout_offset=0,
+            state="pending",
+            messages=messages,
+            max_prompt_len=512,
+            tokenizer=self.mock_tokenizer,
+            # Required fields with defaults
+            response_ids=[],
+            response_attention_mask=[],
+            response_position_ids=[],
+            response_loss_mask=[],
+            reward_scores={},
+            use_inference_chat_template=False,
+            enable_tokenization_sanity_check=False,
+        )
 
         # Initialize conversation from the prompt
         request.initialize_conversation_from_prompt(messages, self.mock_tokenizer)
@@ -263,7 +295,23 @@ class TestRolloutRequestMetricsIntegration:
         mock_tokenizer.apply_chat_template.side_effect = mock_apply_chat_template
 
         # Mock a complete rollout request with metrics
-        request = AsyncRolloutRequest(request_id="integration-test", batch_data_id=0, rollout_offset=0, state="completed", messages=[{"role": "user", "content": "Test message"}, {"role": "assistant", "content": "Test response"}], max_prompt_len=512, tokenizer=mock_tokenizer)
+        request = AsyncRolloutRequest(
+            request_id="integration-test",
+            batch_data_id=0,
+            rollout_offset=0,
+            state="completed",
+            messages=[{"role": "user", "content": "Test message"}, {"role": "assistant", "content": "Test response"}],
+            max_prompt_len=512,
+            tokenizer=mock_tokenizer,
+            # Required fields with defaults
+            response_ids=[],
+            response_attention_mask=[],
+            response_position_ids=[],
+            response_loss_mask=[],
+            reward_scores={},
+            use_inference_chat_template=False,
+            enable_tokenization_sanity_check=False,
+        )
 
         # Track some turns
         request.track_turn("user", {"token_count": 50, "char_count": 200, "tool_calls_count": 0})
