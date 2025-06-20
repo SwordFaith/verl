@@ -1,6 +1,7 @@
 tools:
   - class_name: "verl.tools.sandbox_fusion_tools.SandboxFusionTool"
     config:
+      type: native
       sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co 
       num_workers: 8192
       rate_limit: 8192
