@@ -37,7 +37,15 @@ class TestAsyncRolloutRequestMetrics:
         """Setup test fixtures."""
         self.mock_tokenizer = Mock()
         self.mock_tokenizer.encode.return_value = [1, 2, 3, 4, 5]  # 5 tokens
-        self.mock_tokenizer.apply_chat_template.return_value = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # 10 tokens
+
+        # Mock apply_chat_template with proper return values
+        def mock_apply_chat_template(*args, **kwargs):
+            if kwargs.get("return_dict", False):
+                return {"input_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]}
+            else:
+                return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # 10 tokens
+
+        self.mock_tokenizer.apply_chat_template.side_effect = mock_apply_chat_template
 
         # Base messages for testing
         self.base_messages = [{"role": "user", "content": "Hello, can you help me with coding?"}, {"role": "assistant", "content": "Of course! I'd be happy to help you with coding."}]
@@ -242,12 +250,20 @@ class TestRolloutRequestMetricsIntegration:
 
     def test_metrics_data_structure_compatibility(self):
         """Test that metrics data structures are compatible with aggregation."""
-        # Mock a complete rollout request with metrics
-        request = AsyncRolloutRequest(request_id="integration-test", batch_data_id=0, rollout_offset=0, state="completed", messages=[{"role": "user", "content": "Test message"}, {"role": "assistant", "content": "Test response"}], max_prompt_len=512, tokenizer=Mock())
+        # Create a proper mock tokenizer
+        mock_tokenizer = Mock()
+        mock_tokenizer.encode.return_value = [1, 2, 3, 4, 5]
 
-        # Mock tokenizer behavior
-        request.tokenizer.encode.return_value = [1, 2, 3, 4, 5]
-        request.tokenizer.apply_chat_template.return_value = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        def mock_apply_chat_template(*args, **kwargs):
+            if kwargs.get("return_dict", False):
+                return {"input_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]}
+            else:
+                return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+        mock_tokenizer.apply_chat_template.side_effect = mock_apply_chat_template
+
+        # Mock a complete rollout request with metrics
+        request = AsyncRolloutRequest(request_id="integration-test", batch_data_id=0, rollout_offset=0, state="completed", messages=[{"role": "user", "content": "Test message"}, {"role": "assistant", "content": "Test response"}], max_prompt_len=512, tokenizer=mock_tokenizer)
 
         # Track some turns
         request.track_turn("user", {"token_count": 50, "char_count": 200, "tool_calls_count": 0})
