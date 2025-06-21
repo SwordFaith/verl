@@ -1095,6 +1095,9 @@ class SGLangRollout(BaseRollout):
                 if req.tool_truncation_metrics:
                     tool_metrics_dict["tool_truncation_events"] = req.tool_truncation_metrics
                 all_tool_metrics.append(tool_metrics_dict)
+            else:
+                # Add empty placeholder for requests without tool calls to maintain batch consistency
+                all_tool_metrics.append({})
 
             # Convert to unified ConversationMetrics (includes termination + turn data)
             conversation_metrics_dict = req.get_conversation_metrics()
@@ -1106,6 +1109,9 @@ class SGLangRollout(BaseRollout):
                     # Fallback to dict format if validation fails
                     logger.warning(f"ConversationMetrics validation failed for request {req.request_id}: {e}, using dict format")
                     all_conversation_metrics.append(conversation_metrics_dict)
+            else:
+                # Add empty placeholder for requests without conversation metrics to maintain batch consistency
+                all_conversation_metrics.append({})
 
         # free cache engine
         if self.config.free_cache_engine and self._engine is not None and self._tp_rank == 0:
