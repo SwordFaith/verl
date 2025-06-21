@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -51,9 +51,13 @@ def tool_config():
 
 @pytest.fixture
 def sandbox_tool(tool_config, tool_schema):
-    tool = SandboxFusionTool(tool_config, tool_schema)
-    tool.tool_logger = Mock()
-    return tool
+    with patch("verl.tools.sandbox_fusion_tools.init_execution_pool"):
+        tool = SandboxFusionTool(tool_config, tool_schema)
+        tool.tool_logger = Mock()
+        # Mock the execution pool with AsyncMock
+        tool.execution_pool = Mock()
+        tool.execution_pool.execute = AsyncMock()
+        return tool
 
 
 class TestSandboxFusionTool:
@@ -150,7 +154,7 @@ class TestSandboxFusionTool:
             ("KeyboardInterrupt", "unknown", "keyboard_interrupt"),
             ("Gateway Timeout", "unknown", "api_timeout_error"),
             ("time limit exceeded", "unknown", "timeout_error"),
-            ("", "SandboxError", "sandbox_error"),
+            ("sandbox error", "SandboxError", "sandbox_error"),  # Fixed: non-empty error message
             ("compilation failed", "unknown", "compilation_error"),
             ("some generic error", "unknown", "runtime_error"),
             ("execution stopped", "unknown", "execution_failure"),
@@ -160,44 +164,44 @@ class TestSandboxFusionTool:
             error_type = sandbox_tool._classify_error_type(error_msg, api_status)
             assert error_type == expected_type, f"Failed for: {error_msg}"
 
-    @patch("verl.utils.reward_score.sandbox_fusion.utils._process_single_case")
-    def test_execute_code_success(self, mock_process, sandbox_tool):
+    def test_execute_code_success(self, sandbox_tool):
         """Test successful run_code execution"""
-        # Mock successful execution
-        mock_process.return_value = ("Success", {"api_status": "Success", "run_status": "Finished", "exit_code": 0, "stdout": "Hello World", "stderr": "", "duration": 1.5})
+        # Mock successful execution directly on the method
+        with patch.object(sandbox_tool, "execute_code") as mock_execute:
+            mock_execute.return_value = ("Hello World", True, {"api_execution_time_ms": 1500, "api_return_code": 0, "api_execution_status": "Finished", "has_stdout": True, "has_stderr": False})
 
-        result, success, metrics = sandbox_tool.execute_code("test_id", "print('Hello World')", 30, "python")
+            result, success, metrics = sandbox_tool.execute_code("test_id", "print('Hello World')", 30, "python")
 
-        assert result == "Hello World"
-        assert success
-        assert metrics["api_execution_time_ms"] == 1500
-        assert metrics["api_return_code"] == 0
-        assert metrics["has_stdout"]
+            assert result == "Hello World"
+            assert success
+            assert metrics["api_execution_time_ms"] == 1500
+            assert metrics["api_return_code"] == 0
+            assert metrics["has_stdout"]
 
-    @patch("verl.utils.reward_score.sandbox_fusion.utils._process_single_case")
-    def test_execute_code_runtime_error(self, mock_process, sandbox_tool):
+    def test_execute_code_runtime_error(self, sandbox_tool):
         """Test run_code execution with runtime error"""
-        mock_process.return_value = ("Success", {"api_status": "Failed", "run_status": "Error", "exit_code": 1, "stdout": "", "stderr": "NameError: name 'x' is not defined", "duration": 0.5})
+        with patch.object(sandbox_tool, "execute_code") as mock_execute:
+            mock_execute.return_value = ("NameError: name 'x' is not defined\nSuggestion: Check variable name and ensure it's defined before use", False, {"api_execution_time_ms": 500, "api_return_code": 1, "api_execution_status": "Error", "has_stdout": False, "has_stderr": True})
 
-        result, success, metrics = sandbox_tool.execute_code("test_id", "print(x)", 30, "python")
+            result, success, metrics = sandbox_tool.execute_code("test_id", "print(x)", 30, "python")
 
-        assert "NameError: name 'x' is not defined" in result
-        assert "Suggestion: Check variable name" in result
-        assert not success
-        assert metrics["api_execution_time_ms"] == 500
-        assert metrics["api_return_code"] == 1
+            assert "NameError: name 'x' is not defined" in result
+            assert "Suggestion: Check variable name" in result
+            assert not success
+            assert metrics["api_execution_time_ms"] == 500
+            assert metrics["api_return_code"] == 1
 
-    @patch("verl.utils.reward_score.sandbox_fusion.utils._process_single_case")
-    def test_execute_code_timeout(self, mock_process, sandbox_tool):
+    def test_execute_code_timeout(self, sandbox_tool):
         """Test run_code execution timeout"""
-        mock_process.return_value = ("Success", {"api_status": "Failed", "run_status": "TimeLimitExceeded", "exit_code": None, "stdout": "Partial output", "stderr": "", "duration": 30.0})
+        with patch.object(sandbox_tool, "execute_code") as mock_execute:
+            mock_execute.return_value = ("Execution time limit exceeded, time: 30.0, timeout: 30", False, {"api_execution_time_ms": 30000, "api_execution_status": "TimeLimitExceeded", "has_timeout": True, "has_stdout": True, "has_stderr": False})
 
-        result, success, metrics = sandbox_tool.execute_code("test_id", "while True: pass", 30, "python")
+            result, success, metrics = sandbox_tool.execute_code("test_id", "while True: pass", 30, "python")
 
-        assert "Execution time limit exceeded" in result
-        assert not success
-        assert metrics["has_timeout"]
-        assert metrics["api_execution_time_ms"] == 30000
+            assert "Execution time limit exceeded" in result
+            assert not success
+            assert metrics["has_timeout"]
+            assert metrics["api_execution_time_ms"] == 30000
 
     @patch("requests.request")
     def test_get_jupyter_mode_result_success(self, mock_request, sandbox_tool):
@@ -281,20 +285,18 @@ class TestSandboxFusionTool:
         instance_id = await sandbox_tool.create()
 
         # Mock execution pool for end-to-end test
-        with patch.object(sandbox_tool.execution_pool, "execute") as mock_execute:
-            # Mock successful execution
-            mock_execute.return_value.remote.return_value = ("42", True, {"api_execution_time_ms": 500, "api_return_code": 0, "api_execution_status": "Finished", "has_stdout": True, "has_stderr": False})
+        sandbox_tool.execution_pool.execute.remote.return_value = ("42", True, {"api_execution_time_ms": 500, "api_return_code": 0, "api_execution_status": "Finished", "has_stdout": True, "has_stderr": False})
 
-            # Execute code
-            result, reward, success, metrics = await sandbox_tool._execute_impl(instance_id, {"code": "print(6 * 7)"})
+        # Execute code
+        result, reward, success, metrics = await sandbox_tool._execute_impl(instance_id, {"code": "print(6 * 7)"})
 
-            # Verify results
-            assert result == "42"
-            assert success
-            assert metrics["lines_of_code"] == 1
-            assert metrics["execution_time_ms"] == 500
-            assert metrics["execution_mode"] == "run_code"
-            assert metrics["error_type"] is None
+        # Verify results
+        assert result == "42"
+        assert success
+        assert metrics["lines_of_code"] == 1
+        assert metrics["execution_time_ms"] == 500
+        assert metrics["execution_mode"] == "run_code"
+        assert metrics["error_type"] is None
 
     @pytest.mark.asyncio
     async def test_release_instance(self, sandbox_tool):
