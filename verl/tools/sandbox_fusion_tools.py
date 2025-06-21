@@ -20,7 +20,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from enum import Enum
-from typing import Any, Callable, List, Optional, Tuple, TypeVar
+from typing import Any, Callable, Optional, Tuple, TypeVar
 from uuid import uuid4
 
 import ray
@@ -192,156 +192,170 @@ class SandboxFusionTool(BaseTool):
             if self.tool_logger:
                 self.tool_logger.error(f"no code parsed, instance_id: {instance_id}, parameters: {parameters}")
 
-            # Enhanced error metrics for empty code (using line-based primary metrics)
+            # Essential metrics for empty code case
             specific_metrics = {
-                # === Primary Code Metrics ===
-                "lines_of_code": 0,  # PRIMARY METRIC
-                "total_lines": 0,
-                "code_density": 0.0,
-                "avg_line_length": 0.0,
-                # === Secondary Code Metrics ===
-                "code_char_len": 0,  # SECONDARY
-                "effective_char_len": 0,
-                "response_char_len": 0,
-                # === Execution Context ===
+                # === Primary Metrics ===
+                "lines_of_code": 0,
+                "execution_time_ms": 0.0,
+                "return_code": 1,  # Error case
+                "execution_status": "parameter_error",
                 "execution_mode": self.mode,
-                "language": language,
-                "timeout_used": timeout,
-                # === Code Structure Analysis ===
-                "code_complexity_score": 0.0,
-                "control_structure_lines": 0,
-                "function_definition_lines": 0,
-                "import_lines": 0,
-                "comment_lines": 0,
-                # === Code Content Flags ===
-                "contains_imports": False,
-                "contains_loops": False,
-                "contains_functions": False,
-                "contains_classes": False,
-                "contains_conditionals": False,
-                "contains_exception_handling": False,
-                # === Performance Metrics ===
-                "total_execution_time_ms": 0.0,
-                "compilation_time_ms": 0.0,
-                "runtime_duration_ms": 0.0,
-                "memory_usage_mb": 0.0,
+                # === Secondary Metrics ===
+                "has_stdout": False,
+                "has_stderr": False,
+                "has_timeout": False,
+                "display_object_count": 0,
                 # === Error Classification ===
                 "error_type": "empty_code",
-                "api_status": "parameter_error",
-                "retry_count": 0,
             }
             return "no code parsed", 0.0, False, specific_metrics
 
-        # Time the execution for enhanced metrics
-        execution_start_time = time.time()
-
-        # Execute code based on mode and get both result and success status
+        # Execute code based on mode and get both result, success status, and extracted API metrics
         if self.mode == "run_jupyter":
-            result, success, execution_metadata = await self.execution_pool.execute.remote(self.get_jupyter_mode_result_enhanced, instance_id, timeout)
+            result, success, extracted_api_metrics = await self.execution_pool.execute.remote(self.get_jupyter_mode_result, instance_id, timeout)
         elif self.mode == "run_code":
-            result, success, execution_metadata = await self.execution_pool.execute.remote(self.execute_code_enhanced, instance_id, code, timeout, language)
+            result, success, extracted_api_metrics = await self.execution_pool.execute.remote(self.execute_code, instance_id, code, timeout, language)
         elif self.mode == "sim_jupyter":
-            result, success, execution_metadata = await self.execution_pool.execute.remote(self.get_sim_jupyter_mode_result_enhanced, instance_id, timeout)
+            result, success, extracted_api_metrics = await self.execution_pool.execute.remote(self.get_sim_jupyter_mode_result, instance_id, timeout)
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
 
-        execution_end_time = time.time()
+        # Use extracted API metrics directly
+        execution_metadata = extracted_api_metrics or {}
 
         # Calculate detailed code metrics (prioritize lines_of_code as primary metric)
         code_lines = [line for line in code.split("\n") if line.strip()]
         effective_lines_count = len(code_lines)
-        total_lines_count = len(code.split("\n"))
+        # total_lines_count = len(code.split("\n"))
 
-        # Enhanced tool-specific metrics for code execution (lines_of_code as primary metric)
+        # Essential metrics for sandbox fusion tool (focus on training-critical data)
+        error_msg = "" if success else str(result)
+        api_status = execution_metadata.get("api_execution_status", "unknown")
+
         specific_metrics = {
-            # === Primary Code Metrics (lines-based analysis) ===
-            "lines_of_code": effective_lines_count,  # PRIMARY METRIC: non-empty lines
-            "total_lines": total_lines_count,  # Total lines including empty ones
-            "code_density": effective_lines_count / total_lines_count if total_lines_count > 0 else 0,
-            "avg_line_length": sum(len(line) for line in code_lines) / effective_lines_count if effective_lines_count > 0 else 0,
-            # === Secondary Code Metrics (character-based for reference) ===
-            "code_char_len": len(code),  # SECONDARY: kept for backward compatibility
-            "effective_char_len": sum(len(line.strip()) for line in code_lines),  # Characters in non-empty lines
-            "response_char_len": len(result) if isinstance(result, str) else 0,
-            # === Execution Context ===
-            "execution_mode": self.mode,
-            "language": language,
-            "timeout_used": timeout,
-            # === Code Structure Analysis (line-based) ===
-            "code_complexity_score": self._calculate_code_complexity_by_lines(code_lines),
-            "control_structure_lines": self._count_control_structure_lines(code_lines),
-            "function_definition_lines": self._count_function_definition_lines(code_lines),
-            "import_lines": self._count_import_lines(code_lines),
-            "comment_lines": self._count_comment_lines(code_lines),
-            # === Code Content Flags (boolean indicators) ===
-            "contains_imports": any("import " in line or "from " in line for line in code_lines),
-            "contains_loops": any(keyword in line for line in code_lines for keyword in ["for ", "while "]),
-            "contains_functions": any(keyword in line for line in code_lines for keyword in ["def ", "lambda "]),
-            "contains_classes": any("class " in line for line in code_lines),
-            "contains_conditionals": any(keyword in line for line in code_lines for keyword in ["if ", "elif ", "else:"]),
-            "contains_exception_handling": any(keyword in line for line in code_lines for keyword in ["try:", "except:", "finally:"]),
-            # === Execution Performance Metrics ===
-            "total_execution_time_ms": (execution_end_time - execution_start_time) * 1000,
-            "compilation_time_ms": execution_metadata.get("compilation_time_ms", 0.0),
-            "runtime_duration_ms": execution_metadata.get("runtime_duration_ms", 0.0),
-            "memory_usage_mb": execution_metadata.get("memory_usage_mb", 0.0),
-            # === Execution Results Analysis ===
-            "exit_code": execution_metadata.get("exit_code"),
-            "has_stdout": bool(execution_metadata.get("stdout")),
-            "has_stderr": bool(execution_metadata.get("stderr")),
-            "output_type": execution_metadata.get("output_type", "text"),
-            # === Error Classification ===
-            "error_type": execution_metadata.get("error_type") if not success else None,
-            "api_status": execution_metadata.get("api_status", "unknown"),
-            "retry_count": execution_metadata.get("retry_count", 0),
+            # === Primary Metrics (training critical) ===
+            "lines_of_code": effective_lines_count,  # PRIMARY: code complexity indicator
+            "execution_time_ms": execution_metadata.get("api_execution_time_ms", 0.0),  # Real API timing
+            "return_code": execution_metadata.get("api_return_code", 0 if success else 1),  # Exit status
+            "execution_status": api_status,  # API status
+            "execution_mode": self.mode,  # run_code/run_jupyter/sim_jupyter
+            # === Secondary Metrics (analytics) ===
+            "has_stdout": bool(execution_metadata.get("has_stdout", result and success)),
+            "has_stderr": bool(execution_metadata.get("has_stderr", not success)),
+            "has_timeout": execution_metadata.get("has_timeout", False),  # Timeout detection
+            # === Jupyter-specific (when applicable) ===
+            "display_object_count": execution_metadata.get("display_object_count", 0),
+            # === Fine-grained Error Classification ===
+            "error_type": self._classify_error_type(error_msg, api_status) if not success else None,
         }
 
         return result, 0.0, success, specific_metrics
 
-    def _calculate_code_complexity_by_lines(self, code_lines: List[str]) -> float:
-        """Calculate complexity score based on effective lines of code."""
-        if not code_lines:
-            return 0.0
+    def _format_execution_result(self, raw_response: str, success: bool, api_metadata: dict) -> str:
+        """Format execution result for better model comprehension using full API data"""
+        if success:
+            # Success: Return clean output, prioritizing API stdout
+            if api_metadata.get("stdout"):
+                return api_metadata["stdout"].strip()
+            elif raw_response and raw_response.strip():
+                return raw_response.strip()
+            else:
+                return "Execution completed successfully"
+        else:
+            # Error: Clean error message + actionable suggestion
+            if api_metadata.get("stderr"):
+                error_msg = api_metadata["stderr"].strip()
+            else:
+                error_msg = raw_response.strip() if raw_response else "Execution failed"
 
-        complexity_score = 0.0
-        effective_lines = len(code_lines)
+            suggestion = self._get_python_error_suggestion(error_msg)
+            return f"{error_msg}\n{suggestion}" if suggestion else error_msg
 
-        # Base complexity from effective line count (higher weight)
-        complexity_score += min(effective_lines / 30.0, 1.0) * 0.25
+    def _get_python_error_suggestion(self, error_msg: str) -> str:
+        """Provide actionable suggestions for common Python errors"""
+        if "NameError" in error_msg:
+            return "Suggestion: Check variable name and ensure it's defined before use"
+        elif "TypeError" in error_msg:
+            return "Suggestion: Verify data types and function arguments"
+        elif "ZeroDivisionError" in error_msg:
+            return "Suggestion: Add check for division by zero"
+        elif "SyntaxError" in error_msg:
+            return "Suggestion: Check Python syntax and indentation"
+        elif "IndentationError" in error_msg:
+            return "Suggestion: Fix code indentation (use 4 spaces per level)"
+        elif "ModuleNotFoundError" in error_msg:
+            return "Suggestion: Check if required module is installed"
+        elif "ImportError" in error_msg:
+            return "Suggestion: Verify module installation and import statement"
+        elif "AttributeError" in error_msg:
+            return "Suggestion: Check object attributes and method names"
+        elif "KeyError" in error_msg:
+            return "Suggestion: Verify dictionary keys exist before accessing"
+        elif "IndexError" in error_msg:
+            return "Suggestion: Check list/array bounds before indexing"
+        elif "ValueError" in error_msg:
+            return "Suggestion: Check input values and data conversion"
+        return ""
 
-        # Control structures complexity (per line analysis)
-        control_count = self._count_control_structure_lines(code_lines)
-        complexity_score += min(control_count / 8.0, 1.0) * 0.30
+    def _classify_error_type(self, error_msg: str, api_status: str) -> str:
+        """Classify error type with fine-grained categories for training analytics"""
+        if not error_msg:
+            return "unknown_error"
 
-        # Function/class definitions complexity
-        def_count = self._count_function_definition_lines(code_lines)
-        complexity_score += min(def_count / 4.0, 1.0) * 0.25
+        # API-level errors
+        if api_status == "SandboxError":
+            return "sandbox_error"
+        elif "TimeLimitExceeded" in error_msg or "time limit exceeded" in error_msg.lower():
+            return "timeout_error"
+        elif "Gateway Timeout" in error_msg:
+            return "api_timeout_error"
 
-        # Import complexity (library dependencies)
-        import_count = self._count_import_lines(code_lines)
-        complexity_score += min(import_count / 8.0, 1.0) * 0.20
+        # Python runtime errors (fine-grained)
+        if "NameError" in error_msg:
+            return "name_error"  # Variable not defined
+        elif "TypeError" in error_msg:
+            return "type_error"  # Wrong data type
+        elif "ZeroDivisionError" in error_msg:
+            return "zero_division_error"  # Division by zero
+        elif "SyntaxError" in error_msg:
+            return "syntax_error"  # Invalid Python syntax
+        elif "IndentationError" in error_msg:
+            return "indentation_error"  # Indentation issues
+        elif "ModuleNotFoundError" in error_msg:
+            return "module_not_found_error"  # Missing module
+        elif "ImportError" in error_msg:
+            return "import_error"  # Import issues
+        elif "AttributeError" in error_msg:
+            return "attribute_error"  # Missing attribute/method
+        elif "KeyError" in error_msg:
+            return "key_error"  # Dictionary key missing
+        elif "IndexError" in error_msg:
+            return "index_error"  # List/array out of bounds
+        elif "ValueError" in error_msg:
+            return "value_error"  # Invalid value for operation
+        elif "FileNotFoundError" in error_msg:
+            return "file_not_found_error"  # File system error
+        elif "PermissionError" in error_msg:
+            return "permission_error"  # Permission issues
+        elif "MemoryError" in error_msg:
+            return "memory_error"  # Out of memory
+        elif "RecursionError" in error_msg:
+            return "recursion_error"  # Stack overflow
+        elif "KeyboardInterrupt" in error_msg:
+            return "keyboard_interrupt"  # User interruption
 
-        return min(complexity_score, 1.0)  # Cap at 1.0
+        # Compilation errors
+        elif "compilation failed" in error_msg.lower() or "compile" in error_msg.lower():
+            return "compilation_error"
 
-    def _count_control_structure_lines(self, code_lines: List[str]) -> int:
-        """Count lines containing control structures."""
-        control_keywords = ["if ", "elif ", "else:", "for ", "while ", "try:", "except:", "finally:", "with "]
-        return sum(1 for line in code_lines for keyword in control_keywords if keyword in line.strip())
-
-    def _count_function_definition_lines(self, code_lines: List[str]) -> int:
-        """Count lines with function or class definitions."""
-        definition_keywords = ["def ", "class ", "lambda "]
-        return sum(1 for line in code_lines for keyword in definition_keywords if keyword in line.strip())
-
-    def _count_import_lines(self, code_lines: List[str]) -> int:
-        """Count lines with import statements."""
-        return sum(1 for line in code_lines if "import " in line.strip() or "from " in line.strip())
-
-    def _count_comment_lines(self, code_lines: List[str]) -> int:
-        """Count lines that are primarily comments."""
-        return sum(1 for line in code_lines if line.strip().startswith("#"))
+        # Generic categories
+        elif "error" in error_msg.lower():
+            return "runtime_error"  # Generic runtime error
+        else:
+            return "execution_failure"  # Non-error execution failure
 
     def execute_code(self, instance_id, code, timeout=30, language="python"):
+        """Execute code and return (result, success, api_response_data) for enhanced metrics"""
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -360,7 +374,7 @@ class SandboxFusionTool(BaseTool):
 
                     if self.tool_logger:
                         self.tool_logger.error(f"API request error for instance {instance_id}: {error_msg}")
-                    return f"Error in calling code interpreter: {error_msg}", False
+                    return f"Error in calling code interpreter: {error_msg}", False, {}
 
                 # Check API status
                 api_status = metadata.get("api_status")
@@ -370,49 +384,47 @@ class SandboxFusionTool(BaseTool):
                         error_msg += f": {metadata['api_response']}"
                     if self.tool_logger:
                         self.tool_logger.error(f"Sandbox error for instance {instance_id}: {error_msg}")
-                    return f"Error in calling code interpreter: {error_msg}", False
+                    return f"Error in calling code interpreter: {error_msg}", False, {}
 
                 elif api_status == "Failed":
                     # Handle compile errors
                     compile_status = metadata.get("compile_status")
                     if compile_status in ["Error", "TimeLimitExceeded"] or (compile_status == "Finished" and metadata.get("compile_stderr")):
-                        ret_str = "Compilation failed"
                         if compile_status == "TimeLimitExceeded":
-                            ret_str = f"Compilation time limit exceeded, time: {metadata.get('compile_duration', 'unknown')}"
-                        if metadata.get("compile_stderr"):
-                            ret_str += f"\ncompile_stderr: {metadata['compile_stderr']}"
+                            error_msg = f"Compilation time limit exceeded, time: {metadata.get('compile_duration', 'unknown')}"
+                        else:
+                            error_msg = "Compilation failed"
+
+                        api_metadata = {"stderr": metadata.get("compile_stderr", error_msg)}
+                        formatted_result = self._format_execution_result("", False, api_metadata)
                         if self.tool_logger:
-                            self.tool_logger.warning(f"Compile error for instance {instance_id}: {ret_str}")
-                        return ret_str, False
+                            self.tool_logger.warning(f"Compile error for instance {instance_id}: {formatted_result}")
+                        return formatted_result, False, {}
 
                     # Handle runtime errors
                     run_status = metadata.get("run_status")
                     if run_status == "TimeLimitExceeded":
-                        ret_str = f"Execution time limit exceeded, time: {metadata.get('duration', 'unknown')}, timeout: {timeout}"
-                        if metadata.get("stdout"):
-                            ret_str += f"\nstdout: {metadata['stdout']}"
-                        if metadata.get("stderr"):
-                            ret_str += f"\nstderr: {metadata['stderr']}"
+                        api_metadata = {"stderr": f"Execution time limit exceeded, time: {metadata.get('duration', 'unknown')}, timeout: {timeout}", "stdout": metadata.get("stdout")}
+                        extracted_api_metrics = {"api_execution_time_ms": (metadata.get("duration", 0) or 0) * 1000, "api_execution_status": "TimeLimitExceeded", "has_timeout": True, "has_stdout": bool(metadata.get("stdout")), "has_stderr": bool(metadata.get("stderr"))}
+                        formatted_result = self._format_execution_result("", False, api_metadata)
                         if self.tool_logger:
-                            self.tool_logger.warning(f"Runtime timeout for instance {instance_id}: {ret_str}")
-                        return ret_str, False
+                            self.tool_logger.warning(f"Runtime timeout for instance {instance_id}: {formatted_result}")
+                        return formatted_result, False, extracted_api_metrics
 
                     elif run_status == "Error" or (run_status == "Finished" and metadata.get("exit_code") != 0):
-                        ret_str = ""
-                        if metadata.get("exit_code") is not None and metadata["exit_code"] != 0:
-                            ret_str += f"return_code: {metadata['exit_code']}\n"
-                        if metadata.get("stdout"):
-                            ret_str += f"stdout: {metadata['stdout']}\n"
-                        if metadata.get("stderr"):
-                            ret_str += f"stderr: {metadata['stderr']}\n"
+                        # Runtime error - use enhanced formatting with API data
+                        api_metadata = {"stdout": metadata.get("stdout"), "stderr": metadata.get("stderr"), "exit_code": metadata.get("exit_code")}
+                        # Extract API metrics for failed execution
+                        extracted_api_metrics = {"api_execution_time_ms": (metadata.get("duration", 0) or 0) * 1000, "api_return_code": metadata.get("exit_code"), "api_execution_status": run_status, "has_stdout": bool(metadata.get("stdout")), "has_stderr": bool(metadata.get("stderr"))}
+                        formatted_result = self._format_execution_result("", False, api_metadata)
                         if self.tool_logger:
-                            self.tool_logger.warning(f"Runtime error for instance {instance_id}: {ret_str}")
-                        return ret_str, False
+                            self.tool_logger.warning(f"Runtime error for instance {instance_id}: {formatted_result}")
+                        return formatted_result, False, extracted_api_metrics
 
                     # Unknown failure state
                     if self.tool_logger:
                         self.tool_logger.warning(f"Unknown failure state for instance {instance_id}: {metadata}")
-                    return f"Unknown execution failure: {metadata.get('status', 'unknown')}", False
+                    return f"Unknown execution failure: {metadata.get('status', 'unknown')}", False, {}
 
                 elif api_status == "Success":
                     # Handle successful execution
@@ -421,34 +433,27 @@ class SandboxFusionTool(BaseTool):
                         exit_code = metadata.get("exit_code", 0)
                         is_success = exit_code == 0
 
-                        ret_str = ""
-                        if metadata.get("exit_code") is not None and metadata["exit_code"] != 0:
-                            ret_str += f"return_code: {metadata['exit_code']}\n"
-                        if metadata.get("stdout"):
-                            ret_str += f"stdout: {metadata['stdout']}\n"
-                        if metadata.get("stderr"):
-                            ret_str += f"stderr: {metadata['stderr']}\n"
+                        # Prepare API metadata for formatting and metrics
+                        api_metadata = {"stdout": metadata.get("stdout"), "stderr": metadata.get("stderr"), "exit_code": exit_code}
 
-                        # Return just stdout if successful and no errors, otherwise return structured output
-                        if is_success and not metadata.get("stderr"):
-                            actual_output = metadata["stdout"] if metadata["stdout"] is not None else ""
-                            if self.tool_logger:
-                                self.tool_logger.debug(f"Successful execution for instance {instance_id}: {actual_output}")
-                            return actual_output, True
-                        else:
-                            if self.tool_logger:
-                                self.tool_logger.debug(f"Execution completed for instance {instance_id} with success={is_success}: {ret_str}")
-                            return ret_str, is_success
+                        # Extract specific API metrics for tool metrics
+                        extracted_api_metrics = {"api_execution_time_ms": (metadata.get("duration", 0) or 0) * 1000, "api_return_code": exit_code, "api_execution_status": "Finished", "has_stdout": bool(metadata.get("stdout")), "has_stderr": bool(metadata.get("stderr"))}
+
+                        # Use enhanced formatting
+                        formatted_result = self._format_execution_result("", is_success, api_metadata)
+                        if self.tool_logger:
+                            self.tool_logger.debug(f"Execution for instance {instance_id} (success={is_success}): {formatted_result}")
+                        return formatted_result, is_success, extracted_api_metrics
                     else:
                         if self.tool_logger:
                             self.tool_logger.warning(f"Unexpected success state for instance {instance_id}: run_status={metadata.get('run_status')}")
-                        return f"Unexpected execution state: {metadata.get('run_status')}", False
+                        return f"Unexpected execution state: {metadata.get('run_status')}", False, {}
 
                 else:
                     # Unknown API status
                     if self.tool_logger:
                         self.tool_logger.error(f"Unknown API status for instance {instance_id}: {api_status}")
-                    return f"Unknown API status: {api_status}", False
+                    return f"Unknown API status: {api_status}", False, {}
 
             except Exception as e:
                 if attempt < max_retries - 1:
@@ -459,10 +464,10 @@ class SandboxFusionTool(BaseTool):
                     continue
                 if self.tool_logger:
                     self.tool_logger.error(f"Error in execute_code after {max_retries} attempts: {e}")
-                return f"Error in calling code interpreter: {e}", False
+                return f"Error in calling code interpreter: {e}", False, {}
 
         # Should not reach here
-        return "Error in calling code interpreter: Maximum retries exceeded", False
+        return "Error in calling code interpreter: Maximum retries exceeded", False, {}
 
     def get_jupyter_mode_result(self, instance_id, timeout: Optional[int] = None):
         # Create a new payload for each request with all cells
@@ -479,16 +484,16 @@ class SandboxFusionTool(BaseTool):
         except Exception as e:
             if self.tool_logger:
                 self.tool_logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}")
-            return f"Error in calling code interpreter: {e}", False
+            return f"Error in calling code interpreter: {e}", False, {}
         if response.status_code != 200:
             if self.tool_logger:
                 self.tool_logger.error(f"Error in get_jupyter_mode_result: {response.status_code}\npayload: {payload}\nresponse: {response.text}")
             try:
                 response_json = response.json()
                 error_message = response_json["error_message"]
-                return error_message, False
+                return error_message, False, {}
             except Exception:
-                return f"Error in calling code interpreter: {response.text}", False
+                return f"Error in calling code interpreter: {response.text}", False, {}
         try:
             response_json = response.json()
             status = response_json["status"]
@@ -497,42 +502,53 @@ class SandboxFusionTool(BaseTool):
                 last_cell = response_json["cells"][-1]
                 has_errors = last_cell.get("error") is not None and len(last_cell["error"]) > 0
 
-                ret_str = ""
-                if last_cell["stdout"] is not None and len(last_cell["stdout"]) > 0:
-                    ret_str += f"stdout: {last_cell['stdout']}\n"
-                if last_cell["display"] is not None and len(last_cell["display"]) > 0:
-                    ret_str += f"displays: {last_cell['display']}\n"
-                if last_cell["stderr"] is not None and len(last_cell["stderr"]) > 0:
-                    ret_str += f"stderr: {last_cell['stderr']}\n"
-                if has_errors:
-                    ret_str += f"errors: {last_cell['error']}\n"
-
                 # Success if no errors, even if there are warnings (stderr)
                 is_success = not has_errors
-                return ret_str, is_success
+
+                # Format response using enhanced formatter
+                api_metadata = {"stdout": last_cell.get("stdout"), "stderr": last_cell.get("stderr")}
+                formatted_result = self._format_execution_result("", is_success, api_metadata)
+
+                # Extract specific API metrics from jupyter response with driver timing
+                driver_info = response_json.get("driver", {})
+                extracted_api_metrics = {
+                    "api_execution_time_ms": (driver_info.get("execution_time", 0) or 0) * 1000,
+                    "api_execution_status": driver_info.get("status", "unknown"),
+                    "has_display_objects": bool(last_cell.get("display")),
+                    "display_object_count": len(last_cell.get("display", [])),
+                    "has_cell_errors": bool(last_cell.get("error")),
+                    "cell_error_count": len(last_cell.get("error", [])),
+                    "has_stdout": bool(last_cell.get("stdout")),
+                    "has_stderr": bool(last_cell.get("stderr")),
+                }
+
+                return formatted_result, is_success, extracted_api_metrics
 
             elif status == "Failed":
                 execution_status = response_json["driver"]["status"]
                 if execution_status == "TimeLimitExceeded":
-                    return "Execution time limit exceeded", False
+                    # Extract basic metrics even for timeout
+                    extracted_api_metrics = {"api_execution_status": "TimeLimitExceeded", "has_timeout": True}
+                    return "Execution time limit exceeded", False, extracted_api_metrics
                 else:
                     error_msg = f"Unknown execution status: {execution_status}"
                     if self.tool_logger:
                         self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
-                    return error_msg, False
+                    return error_msg, False, {}
             else:
                 error_msg = f"Unknown response status: {status}"
                 if self.tool_logger:
                     self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
-                return error_msg, False
+                return error_msg, False, {}
         except Exception as e:
             if self.tool_logger:
                 self.tool_logger.error(f"Error in get_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
-            return f"Error in calling code interpreter: {response.text}", False
+            return f"Error in calling code interpreter: {response.text}", False, {}
 
     def get_sim_jupyter_mode_result(self, instance_id, timeout: Optional[int] = None):
+        """Get sim jupyter execution result and return (result, success, extracted_api_metrics)"""
         if len(self._instance_dict[instance_id]["cells"]) == 0:
-            return "no code parsed", False
+            return "no code parsed", False, {}
         elif len(self._instance_dict[instance_id]["cells"]) == 1:
             prev_cells = []
         else:
@@ -588,7 +604,7 @@ class SandboxFusionTool(BaseTool):
                     continue
                 if self.tool_logger:
                     self.tool_logger.error(f"Error in get_sim_jupyter_mode_result after {max_retries} attempts: {e}\npayload: {payload}")
-                return f"Error in calling code interpreter: {e}", False
+                return f"Error in calling code interpreter: {e}", False, {}
 
         if response.status_code != 200:
             if self.tool_logger:
@@ -596,9 +612,9 @@ class SandboxFusionTool(BaseTool):
             try:
                 response_json = response.json()
                 error_message = response_json["error_message"]
-                return error_message, False
+                return error_message, False, {}
             except Exception:
-                return f"Error in calling code interpreter: {response.text}", False
+                return f"Error in calling code interpreter: {response.text}", False, {}
         try:
             response_json = response.json()
             status = response_json["status"]
@@ -609,62 +625,74 @@ class SandboxFusionTool(BaseTool):
                     return_code = response_json["run_result"].get("return_code", 0)
                     is_success = return_code == 0
 
-                    ret_str = ""
-                    if return_code is not None and return_code != 0:
-                        ret_str += f"return_code: {return_code}\n"
-                    if response_json["run_result"]["stdout"] is not None and len(response_json["run_result"]["stdout"]) > 0:
-                        ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
-                    if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
-                        ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
-                    return ret_str, is_success
+                    # Use enhanced formatting and extract API metrics
+                    api_metadata = {"stdout": response_json["run_result"].get("stdout"), "stderr": response_json["run_result"].get("stderr")}
+                    formatted_result = self._format_execution_result("", is_success, api_metadata)
+
+                    # Extract API metrics from sim jupyter response
+                    extracted_api_metrics = {
+                        "api_execution_time_ms": (response_json["run_result"].get("execution_time", 0) or 0) * 1000,
+                        "api_return_code": return_code,
+                        "api_execution_status": execution_status,
+                        "has_stdout": bool(response_json["run_result"].get("stdout")),
+                        "has_stderr": bool(response_json["run_result"].get("stderr")),
+                    }
+
+                    return formatted_result, is_success, extracted_api_metrics
                 else:
                     error_msg = f"Unknown execution status: {execution_status}"
                     if self.tool_logger:
                         self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
-                    return error_msg, False
+                    return error_msg, False, {}
             elif status == "Failed":
                 execution_status = response_json["run_result"]["status"]
                 # Drop last cell if failed, to avoid keep failed in further execution
                 self._instance_dict[instance_id]["cells"] = self._instance_dict[instance_id]["cells"][:-1]
                 if execution_status == "TimeLimitExceeded":
-                    ret_str = f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, timeout: {payload['run_timeout']}"
-                    if response_json["run_result"]["stdout"] is not None and len(response_json["run_result"]["stdout"]) > 0:
-                        ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
-                    if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
-                        ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
+                    api_metadata = {"stderr": f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, timeout: {payload['run_timeout']}", "stdout": response_json["run_result"].get("stdout"), "execution_time": response_json["run_result"].get("execution_time", 0)}
+                    formatted_result = self._format_execution_result("", False, api_metadata)
+                    extracted_api_metrics = {
+                        "api_execution_time_ms": (response_json["run_result"].get("execution_time", 0) or 0) * 1000,
+                        "api_execution_status": "TimeLimitExceeded",
+                        "has_timeout": True,
+                        "has_stdout": bool(response_json["run_result"].get("stdout")),
+                        "has_stderr": bool(response_json["run_result"].get("stderr")),
+                    }
                     if self.tool_logger:
                         self.tool_logger.warning(f"Execution time limit exceeded, time: {response_json['run_result']['execution_time']}, payload: {payload}, response: {response.text}")
-                    return ret_str, False
+                    return formatted_result, False, extracted_api_metrics
                 elif execution_status == "Finished":
                     # Failed status with Finished execution means non-zero return code
                     return_code = response_json["run_result"].get("return_code", 1)
-                    ret_str = ""
-                    if return_code is not None and return_code != 0:
-                        ret_str += f"return_code: {return_code}\n"
-                    if response_json["run_result"]["stdout"] is not None and len(response_json["run_result"]["stdout"]) > 0:
-                        ret_str += f"stdout: {response_json['run_result']['stdout']}\n"
-                    if response_json["run_result"]["stderr"] is not None and len(response_json["run_result"]["stderr"]) > 0:
-                        ret_str += f"stderr: {response_json['run_result']['stderr']}\n"
-                    return ret_str, False
+                    api_metadata = {"stderr": response_json["run_result"].get("stderr"), "stdout": response_json["run_result"].get("stdout"), "exit_code": return_code}
+                    formatted_result = self._format_execution_result("", False, api_metadata)
+                    extracted_api_metrics = {
+                        "api_execution_time_ms": (response_json["run_result"].get("execution_time", 0) or 0) * 1000,
+                        "api_return_code": return_code,
+                        "api_execution_status": execution_status,
+                        "has_stdout": bool(response_json["run_result"].get("stdout")),
+                        "has_stderr": bool(response_json["run_result"].get("stderr")),
+                    }
+                    return formatted_result, False, extracted_api_metrics
                 else:
                     error_msg = f"Unknown execution status: {execution_status}"
                     if self.tool_logger:
                         self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
-                    return error_msg, False
+                    return error_msg, False, {}
             elif status == "SandboxError":
                 error_msg = f"Sandbox error: {response.text}"
                 if self.tool_logger:
                     self.tool_logger.error(error_msg)
-                return error_msg, False
+                return error_msg, False, {}
             else:
                 error_msg = f"Unknown response status: {status}"
                 if self.tool_logger:
                     self.tool_logger.error(f"{error_msg}\nresponse: {response.text}")
-                return error_msg, False
+                return error_msg, False, {}
         except Exception as e:
             if self.tool_logger:
                 self.tool_logger.error(f"Error in get_sim_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
-            return f"Error in calling code interpreter: {response.text}", False
+            return f"Error in calling code interpreter: {response.text}", False, {}
 
     async def calc_reward(self, instance_id: str, **kwargs) -> str:
         return self._instance_dict[instance_id]["reward"]
