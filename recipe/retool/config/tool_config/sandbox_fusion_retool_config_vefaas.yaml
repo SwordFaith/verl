@@ -1,0 +1,34 @@
+tools:
+  - class_name: "verl.tools.sandbox_fusion_tools.SandboxFusionTool"
+    config:
+      type: native
+      sandbox_fusion_url: https://sd04qmtd8e6v9i08l9l00.apigateway-cn-beijing.volceapi.com
+      num_workers: 8192
+      rate_limit: 8192
+      mode: "run_code"  # run_code, run_jupyter, sim_jupyter
+      default_timeout: 3
+    tool_schema:
+      type: "function"
+      function:
+        name: "code_interpreter"
+        description: |
+          A Python code execution environment that allows you to:
+          - Run Python code for calculations, data analysis, and other computational tasks
+          - Get results through the `print()` function output
+          - Execute code in an isolated environment (each execution starts fresh)
+          
+          Important notes:
+          - Results are captured from `print()` statements
+          - Returns empty string if no output is printed
+          - Each execution is independent (no state persistence between runs)
+        parameters:
+          type: "object"
+          properties:
+            code:
+              type: "string"
+              description: "The Python code to be executed. This can include calculations, data manipulation, or any valid Python code."
+            language:
+              type: "string"
+              description: "The programming language of the code. Currently only Python is supported."
+              default: "python"
+          required: ["code"]
