@@ -260,25 +260,41 @@ class AsyncRolloutRequest(BaseModel):
         """Set termination reason (unified)"""
         self.termination_reason = reason
 
-    def get_enhanced_tool_metrics(self) -> Dict[str, Any]:
-        """Return raw tool metrics data for standardized aggregation.
+    def get_tool_metrics(self) -> List[Dict[str, Any]]:
+        """Extract individual tool execution metrics from stored data.
 
-        This method provides the raw data that feeds into verl.utils.metric.aggregate_tool_metrics().
-        It returns the basic tool execution data without performing aggregation.
+        Returns:
+            List of individual tool execution records, each compatible with ToolMetrics schema.
+            Empty list if no tool executions occurred.
         """
+        individual_tool_metrics = []
+
         if not self.metrics:
-            return {}
+            return individual_tool_metrics
 
-        # Extract trajectory-level tool calls count
-        tool_metrics_keys = [k for k in self.metrics.keys() if k not in ["turn_stats", "token_stats"]]
-        trajectory_tool_calls = sum(len(self.metrics[tool_name]) for tool_name in tool_metrics_keys)
+        # Extract all individual tool execution records
+        for tool_name, metrics_list in self.metrics.items():
+            if tool_name not in ["turn_stats", "token_stats", "conversation_stats"]:
+                # Validate metrics_list structure
+                if not isinstance(metrics_list, list):
+                    logger.warning(f"Invalid metrics_list type for tool {tool_name}: {type(metrics_list)}")
+                    continue
 
-        # Return basic structure compatible with standardized aggregation
-        return {
-            "trajectory_tool_calls": trajectory_tool_calls,
-            "tool_metrics_raw": self.metrics,  # Raw metrics for external aggregation
-            "turn_tool_calls_detail": self.turn_tool_calls_detail,
-        }
+                # Each metrics_list contains tool execution records created by _assemble_tool_metrics()
+                for metrics_dict in metrics_list:
+                    # Validate individual metrics_dict
+                    if not isinstance(metrics_dict, dict) or not metrics_dict:
+                        logger.warning(f"Invalid metrics_dict for tool {tool_name}: {type(metrics_dict)}")
+                        continue
+
+                    # Add tool truncation metrics if present (at request level)
+                    if self.tool_truncation_metrics:
+                        metrics_dict = metrics_dict.copy()  # Avoid modifying original
+                        metrics_dict["tool_truncation_events"] = self.tool_truncation_metrics
+
+                    individual_tool_metrics.append(metrics_dict)
+
+        return individual_tool_metrics
 
     def get_conversation_metrics(self) -> Dict[str, Any]:
         """Generate unified conversation metrics (includes turns + termination)"""

@@ -509,6 +509,43 @@ class SGLangRollout(BaseRollout):
             "tool_calls_per_turn": tool_calls_per_turn,
         }
 
+    def _validate_tool_metrics_structure(self, metrics_dict: dict) -> bool:
+        """Validate that metrics_dict contains all required ToolMetrics fields.
+
+        Args:
+            metrics_dict: Dictionary to validate
+
+        Returns:
+            True if all required fields are present, False otherwise
+        """
+        required_fields = ["tool_name", "instance_id", "latency_ms", "success", "response_char_length", "tool_calls_per_trajectory", "tool_calls_per_turn"]
+        return all(field in metrics_dict for field in required_fields)
+
+    def _create_fallback_tool_metrics(self, request_id: str) -> dict:
+        """Create minimal fallback tool metrics to prevent data loss.
+
+        Args:
+            request_id: Request identifier for fallback metrics
+
+        Returns:
+            Minimal ToolMetrics-compatible dictionary
+        """
+        return {
+            "tool_name": "unknown",
+            "instance_id": request_id,
+            "latency_ms": 0.0,
+            "success": False,
+            "response_char_length": 0,
+            "tool_calls_per_trajectory": 0,
+            "tool_calls_per_turn": 0,
+            "error_type": "metrics_processing_error",
+            "tool_specific_metrics": {},
+            "request_id": request_id,
+            "batch_data_id": -1,
+            "rollout_offset": -1,
+            "timestamp": time.time(),
+        }
+
     @GPUMemoryLogger(role="sglang rollout", logger=logger)
     @torch.no_grad()
     def generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
@@ -1087,48 +1124,35 @@ class SGLangRollout(BaseRollout):
         all_tool_metrics = []
         all_conversation_metrics = []
 
+        # Import once outside the loop for performance
+        from verl.utils.metric import ToolMetrics
+
         for req in sorted_output_req_list:
-            # Convert to standardized ToolMetrics using Pydantic validation with fallback
+            # Extract individual tool metrics using unified method (similar to get_conversation_metrics)
             try:
-                tool_metrics_dict = req.get_enhanced_tool_metrics()
-                if tool_metrics_dict:
-                    # Add tool truncation metrics if present
-                    if req.tool_truncation_metrics:
-                        tool_metrics_dict["tool_truncation_events"] = req.tool_truncation_metrics
+                individual_tool_metrics = req.get_tool_metrics()
 
-                    # Validate tool metrics structure - attempt Pydantic validation
-                    from verl.utils.metric import ToolMetrics
-
+                # Process each individual tool execution record
+                # Note: all_tool_metrics is a flat list of individual tool executions across all requests
+                for metrics_dict in individual_tool_metrics:
                     try:
-                        # Test validation by creating ToolMetrics instance (don't store, just validate)
-                        if "tool_name" in tool_metrics_dict and "latency_ms" in tool_metrics_dict:
-                            validated_metrics = ToolMetrics(**tool_metrics_dict)
+                        # Validate that this is a properly formatted ToolMetrics record
+                        if self._validate_tool_metrics_structure(metrics_dict):
+                            validated_metrics = ToolMetrics(**metrics_dict)
                             all_tool_metrics.append(validated_metrics.model_dump())
                         else:
-                            # Missing required fields, use fallback
-                            logger.warning(f"ToolMetrics missing required fields for request {req.request_id}, using fallback")
-                            all_tool_metrics.append(tool_metrics_dict)
+                            logger.warning(f"Invalid tool metrics structure for request {req.request_id}: missing required fields")
+                            all_tool_metrics.append(metrics_dict)  # fallback to raw dict
                     except Exception as validation_error:
-                        # Validation failed, use dict format as fallback
-                        logger.warning(f"ToolMetrics validation failed for request {req.request_id}: {validation_error}, using dict format")
-                        all_tool_metrics.append(tool_metrics_dict)
-                else:
-                    # Add empty placeholder for requests without tool calls to maintain batch consistency
-                    all_tool_metrics.append({})
+                        logger.warning(f"ToolMetrics validation failed for request {req.request_id}: {validation_error}")
+                        all_tool_metrics.append(metrics_dict)  # fallback to raw dict
+
+                # No explicit handling for requests without tool calls - they simply contribute no records
+
             except Exception as e:
                 # Critical error in tool metrics processing, create minimal fallback
-                logger.error(f"Critical error processing tool metrics for request {req.request_id}: {e}, using minimal fallback")
-                # Create minimal fallback metrics to prevent complete data loss
-                fallback_metrics = {
-                    "tool_name": "unknown",
-                    "instance_id": req.request_id,
-                    "latency_ms": 0.0,
-                    "success": False,
-                    "response_char_length": 0,
-                    "error_type": "metrics_processing_error",
-                    "tool_calls_per_trajectory": 0,
-                    "tool_calls_per_turn": 0,
-                }
+                logger.error(f"Critical error processing tool metrics for request {req.request_id}: {e}")
+                fallback_metrics = self._create_fallback_tool_metrics(req.request_id)
                 all_tool_metrics.append(fallback_metrics)
 
             # Convert to unified ConversationMetrics (includes termination + turn data)
