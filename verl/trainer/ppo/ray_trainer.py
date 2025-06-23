@@ -53,6 +53,7 @@ from verl.trainer.ppo.reward import compute_reward, compute_reward_async
 from verl.utils.checkpoint.checkpoint_manager import BaseCheckpointManager, find_latest_ckpt_path
 from verl.utils.debug import marked_timer
 from verl.utils.metric import (
+    MetricsAggregator,
     aggregate_batch_metrics,
     reduce_metrics,
 )
@@ -1184,39 +1185,89 @@ class RayPPOTrainer:
                     return
 
     def _process_rollout_metrics(self, gen_batch_output):
-        """Process rollout metrics using dual-layer standardized aggregation."""
+        """Process rollout metrics using dual-layer standardized aggregation with robust error handling."""
+        import logging
         import time
 
+        logger = logging.getLogger(__name__)
+        logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
         processing_start_time = time.time()
         metrics_to_log = {}
 
-        # Extract dual-layer metrics from gen_batch_output
-        tool_metrics_data = gen_batch_output.non_tensor_batch.get("tool_metrics", [])
-        conversation_metrics_data = gen_batch_output.non_tensor_batch.get("conversation_metrics", [])  # Now unified
+        try:
+            # Extract dual-layer metrics from gen_batch_output
+            tool_metrics_data = gen_batch_output.non_tensor_batch.get("tool_metrics", [])
+            conversation_metrics_data = gen_batch_output.non_tensor_batch.get("conversation_metrics", [])
 
-        # Convert numpy arrays to lists if needed
-        if isinstance(tool_metrics_data, np.ndarray):
-            tool_metrics_data = tool_metrics_data.tolist()
-        if isinstance(conversation_metrics_data, np.ndarray):
-            conversation_metrics_data = conversation_metrics_data.tolist()
+            # Convert numpy arrays to lists if needed (with validation)
+            if isinstance(tool_metrics_data, np.ndarray):
+                tool_metrics_data = tool_metrics_data.tolist()
+            if isinstance(conversation_metrics_data, np.ndarray):
+                conversation_metrics_data = conversation_metrics_data.tolist()
 
-        # Dual-layer batch aggregation
-        if tool_metrics_data or conversation_metrics_data:
-            processing_time_ms = (time.time() - processing_start_time) * 1000
-            batch_metrics = aggregate_batch_metrics(tool_metrics_list=tool_metrics_data if tool_metrics_data else None, conversation_metrics_list=conversation_metrics_data if conversation_metrics_data else None, processing_time_ms=processing_time_ms)
+            # Ensure data is list of dicts
+            if tool_metrics_data and not isinstance(tool_metrics_data, list):
+                logger.warning(f"Unexpected tool_metrics_data type: {type(tool_metrics_data)}")
+                tool_metrics_data = []
+            if conversation_metrics_data and not isinstance(conversation_metrics_data, list):
+                logger.warning(f"Unexpected conversation_metrics_data type: {type(conversation_metrics_data)}")
+                conversation_metrics_data = []
 
-            # Extract tool metrics with tools/ namespace
-            if batch_metrics.tool_metrics:
-                tool_dict = batch_metrics.tool_metrics.model_dump()
-                for key, value in tool_dict.items():
-                    if key not in ["count", "min_value", "max_value", "avg_value", "total_value", "raw_values"]:
-                        metrics_to_log[f"tools/{key}"] = value
+            # Log metrics data availability for debugging
+            logger.debug(f"Processing metrics: tool={len(tool_metrics_data)}, conversation={len(conversation_metrics_data)}")
 
-            # Extract unified conversation metrics with conversations/ namespace (includes termination + turn data)
-            if batch_metrics.conversation_metrics:
-                conv_dict = batch_metrics.conversation_metrics.model_dump()
-                for key, value in conv_dict.items():
-                    if key not in ["count", "min_value", "max_value", "avg_value", "total_value", "raw_values"]:
-                        metrics_to_log[f"conversations/{key}"] = value
+            # Dual-layer batch aggregation with error handling
+            if tool_metrics_data or conversation_metrics_data:
+                processing_time_ms = (time.time() - processing_start_time) * 1000
 
+                try:
+                    batch_metrics = aggregate_batch_metrics(tool_metrics_list=tool_metrics_data if tool_metrics_data else None, conversation_metrics_list=conversation_metrics_data if conversation_metrics_data else None, processing_time_ms=processing_time_ms)
+                except Exception as e:
+                    logger.error(f"Failed to aggregate batch metrics: {e}")
+                    return metrics_to_log
+
+                # Extract tool metrics with type-aware processing
+                if batch_metrics.tool_metrics:
+                    try:
+                        tool_dict = batch_metrics.tool_metrics.model_dump()
+
+                        # Extract only valid numeric metrics using standardized filtering
+                        numeric_tool_metrics = MetricsAggregator.filter_numeric_metrics(tool_dict)
+                        for key, value in numeric_tool_metrics.items():
+                            metrics_to_log[f"tools/{key}"] = value
+
+                        # Process categorical tool metrics separately for WandB compatibility
+                        if tool_metrics_data:
+                            categorical_tool_metrics = MetricsAggregator.aggregate_categorical_fields(tool_metrics_data, "tools_")
+                            metrics_to_log.update(categorical_tool_metrics)
+
+                        logger.debug(f"Processed {len(numeric_tool_metrics)} numeric tool metrics and {len(categorical_tool_metrics)} categorical tool metrics")
+                    except Exception as e:
+                        logger.error(f"Failed to process tool metrics: {e}")
+
+                # Extract conversation metrics with type-aware processing
+                if batch_metrics.conversation_metrics:
+                    try:
+                        conv_dict = batch_metrics.conversation_metrics.model_dump()
+
+                        # Extract only valid numeric metrics using standardized filtering
+                        numeric_conv_metrics = MetricsAggregator.filter_numeric_metrics(conv_dict)
+                        for key, value in numeric_conv_metrics.items():
+                            metrics_to_log[f"conversations/{key}"] = value
+
+                        # Process categorical conversation metrics separately for WandB compatibility
+                        if conversation_metrics_data:
+                            categorical_conv_metrics = MetricsAggregator.aggregate_categorical_fields(conversation_metrics_data, "conversations_")
+                            metrics_to_log.update(categorical_conv_metrics)
+
+                        logger.debug(f"Processed {len(numeric_conv_metrics)} numeric conversation metrics and {len(categorical_conv_metrics)} categorical conversation metrics")
+                    except Exception as e:
+                        logger.error(f"Failed to process conversation metrics: {e}")
+
+        except Exception as e:
+            logger.error(f"Critical error in _process_rollout_metrics: {e}")
+            # Return empty metrics to prevent training interruption
+            return {}
+
+        logger.debug(f"Total processed metrics: {len(metrics_to_log)} in {(time.time() - processing_start_time) * 1000:.2f}ms")
         return metrics_to_log

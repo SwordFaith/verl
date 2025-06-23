@@ -16,6 +16,7 @@
 Unified metrics aggregation utilities with shared logic.
 """
 
+import math
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, TypeVar, Union
 
@@ -93,6 +94,107 @@ class MetricsAggregator:
                 key = "unknown"
             groups[key].append(metric)
         return dict(groups)
+
+    @staticmethod
+    def aggregate_categorical_fields(data_list: List[Dict[str, Any]], prefix: str = "") -> Dict[str, Any]:
+        """
+        Aggregate categorical (string/boolean) fields into count/ratio statistics for logging compatibility.
+
+        Converts non-numeric fields into numeric format:
+        - Boolean fields: true_count, true_ratio, false_count, false_ratio
+        - String fields: top-5 values with count/ratio for each + summary stats
+
+        Args:
+            data_list: List of metric dictionaries containing mixed data types
+            prefix: Prefix for metric names (e.g., "tools_", "conversations_")
+
+        Returns:
+            Dictionary with numeric-only metrics suitable for WandB/TensorBoard
+        """
+        aggregated = {}
+        if not data_list:
+            return aggregated
+
+        # Filter out empty/invalid data
+        valid_data = [data for data in data_list if data and isinstance(data, dict)]
+        if not valid_data:
+            return aggregated
+
+        # Collect all categorical fields (non-numeric types)
+        categorical_fields = set()
+        for data in valid_data:
+            for key, value in data.items():
+                # Identify categorical fields: strings, booleans (but not numeric types)
+                if isinstance(value, (str, bool)) and not isinstance(value, (int, float)):
+                    categorical_fields.add(key)
+
+        # Process each categorical field
+        for field in categorical_fields:
+            # Extract non-null values for this field
+            values = [data.get(field) for data in valid_data if field in data and data.get(field) is not None]
+            total_count = len(values)
+
+            if total_count > 0:
+                # Boolean type: convert to true/false counts and ratios
+                if all(isinstance(v, bool) for v in values):
+                    true_count = sum(1 for v in values if v is True)
+                    false_count = total_count - true_count
+
+                    aggregated[f"{prefix}{field}_true_count"] = true_count
+                    aggregated[f"{prefix}{field}_true_ratio"] = true_count / total_count if total_count > 0 else 0.0
+                    aggregated[f"{prefix}{field}_false_count"] = false_count
+                    aggregated[f"{prefix}{field}_false_ratio"] = false_count / total_count if total_count > 0 else 0.0
+
+                # String type: convert to top-K value counts and ratios
+                else:
+                    # Count occurrences of each value
+                    value_counts = {}
+                    for v in values:
+                        v_str = str(v)
+                        value_counts[v_str] = value_counts.get(v_str, 0) + 1
+
+                    # Top-5 most frequent values to prevent metric explosion
+                    top_values = sorted(value_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+                    for value_name, count in top_values:
+                        # Create safe metric name (replace special characters)
+                        safe_name = value_name.replace("/", "_").replace(" ", "_").replace("-", "_")
+                        safe_name = safe_name.replace(".", "_").replace(":", "_")[:20]  # Limit length
+                        safe_name = "".join(c for c in safe_name if c.isalnum() or c == "_")  # Keep only safe chars
+
+                        if safe_name:  # Only add if name is valid after cleaning
+                            aggregated[f"{prefix}{field}_{safe_name}_count"] = count
+                            aggregated[f"{prefix}{field}_{safe_name}_ratio"] = count / total_count
+
+                    # Summary statistics for the field
+                    aggregated[f"{prefix}{field}_total_samples"] = total_count
+                    aggregated[f"{prefix}{field}_unique_values"] = len(value_counts)
+
+        return aggregated
+
+    @staticmethod
+    def filter_numeric_metrics(metrics_dict: Dict[str, Any], exclude_fields: set = None) -> Dict[str, Any]:
+        """
+        Filter metrics dictionary to include only valid numeric values suitable for logging.
+
+        Args:
+            metrics_dict: Dictionary of mixed metric types
+            exclude_fields: Set of field names to exclude from filtering
+
+        Returns:
+            Dictionary containing only valid numeric metrics
+        """
+        if exclude_fields is None:
+            exclude_fields = {"count", "min_value", "max_value", "avg_value", "total_value", "raw_values"}
+
+        filtered = {}
+        for key, value in metrics_dict.items():
+            if key not in exclude_fields and isinstance(value, (int, float)):
+                # Validate numeric values (exclude NaN/Inf)
+                if not (math.isnan(value) or math.isinf(value)):
+                    filtered[key] = value
+
+        return filtered
 
 
 def aggregate_tool_metrics(metrics_list: List[Union[ToolMetrics, Dict]]) -> AggregatedToolMetrics:
