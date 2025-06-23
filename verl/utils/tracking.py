@@ -54,7 +54,12 @@ class Tracking:
 
             settings = None
             if config and config["trainer"].get("wandb_proxy", None):
-                settings = wandb.Settings(https_proxy=config["trainer"]["wandb_proxy"])
+                # Support both HTTP and HTTPS proxy settings for comprehensive coverage
+                proxy_url = config["trainer"]["wandb_proxy"]
+                settings = wandb.Settings(
+                    https_proxy=proxy_url,
+                    http_proxy=proxy_url,  # Add HTTP proxy support for complete coverage
+                )
             wandb.init(project=project_name, name=experiment_name, config=config, settings=settings)
             self.logger["wandb"] = wandb
 
@@ -277,6 +282,11 @@ class ValidationGenerationsLogger:
         """Log samples to wandb as a table"""
         import wandb
 
+        # Check if WandB is properly initialized (implicitly includes proxy settings)
+        if not wandb.run:
+            print("WARNING: WandB is not initialized. Skipping validation generation logging.")
+            return
+
         # Create column names for all samples
         columns = ["step"] + sum([[f"input_{i + 1}", f"output_{i + 1}", f"score_{i + 1}"] for i in range(len(samples))], [])
 
@@ -296,7 +306,7 @@ class ValidationGenerationsLogger:
 
         new_table.add_data(*row_data)
 
-        # Update reference and log
+        # Update reference and log (uses existing wandb.run which has proxy settings)
         wandb.log({"val/generations": new_table}, step=step)
         self.validation_table = new_table
 
