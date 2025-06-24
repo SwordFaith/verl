@@ -221,7 +221,7 @@ class MetricsAggregator:
                 safe_value = "".join(c for c in safe_value if c.isalnum() or c == "_")
 
                 if safe_value:
-                    flattened[f"{prefix}{field_name}_{safe_value}_count"] = count
+                    flattened[f"{prefix}{field_name}/{safe_value}/count"] = count
 
             # Add ratios
             for value, ratio in cat_metrics.value_ratios.items():
@@ -231,13 +231,13 @@ class MetricsAggregator:
                 safe_value = "".join(c for c in safe_value if c.isalnum() or c == "_")
 
                 if safe_value:
-                    flattened[f"{prefix}{field_name}_{safe_value}_ratio"] = ratio
+                    flattened[f"{prefix}{field_name}/{safe_value}/ratio"] = ratio
 
             # Add summary statistics
             total_samples = sum(cat_metrics.value_counts.values())
             unique_values = len(cat_metrics.value_counts)
-            flattened[f"{prefix}{field_name}_total_samples"] = total_samples
-            flattened[f"{prefix}{field_name}_unique_values"] = unique_values
+            flattened[f"{prefix}{field_name}/total_samples"] = total_samples
+            flattened[f"{prefix}{field_name}/unique_values"] = unique_values
 
         return flattened
 

@@ -1231,18 +1231,25 @@ class RayPPOTrainer:
                     try:
                         tool_dict = batch_metrics.tool_metrics.model_dump()
 
-                        # Extract all numeric metrics (no exclusions needed)
-                        tool_numeric_metrics = MetricsAggregator.filter_numeric_metrics(tool_dict)
-                        for key, value in tool_numeric_metrics.items():
-                            metrics_to_log[f"tools/{key}"] = value
+                        # Extract scalar metrics (float/int values) and expand stats objects
+                        for key, value in tool_dict.items():
+                            if isinstance(value, (int, float)):
+                                # Direct scalar metrics
+                                metrics_to_log[f"tools/{key}"] = value
+                            elif isinstance(value, dict) and key.endswith("_stats"):
+                                # AggregatedNumericMetrics objects - expand all statistical fields
+                                base_name = key.replace("_stats", "")
+                                for stat_name, stat_value in value.items():
+                                    if isinstance(stat_value, (int, float)):
+                                        metrics_to_log[f"tools/{base_name}/{stat_name}"] = stat_value
 
                         # Process categorical tool metrics using unified AggregatedCategoricalMetrics
                         if tool_metrics_data:
                             categorical_results = MetricsAggregator.aggregate_categorical_fields(tool_metrics_data)
-                            flattened_categorical = MetricsAggregator.flatten_categorical_metrics(categorical_results, "tools_")
+                            flattened_categorical = MetricsAggregator.flatten_categorical_metrics(categorical_results, "tools/")
                             metrics_to_log.update(flattened_categorical)
 
-                        logger.debug(f"Processed {len(tool_numeric_metrics)} numeric tool metrics and {len(flattened_categorical) if tool_metrics_data else 0} categorical tool metrics")
+                        logger.debug(f"Processed tool metrics: auto-detected scalars + stats expansion + {len(flattened_categorical) if tool_metrics_data else 0} categorical metrics")
                     except Exception as e:
                         logger.error(f"Failed to process tool metrics: {e}")
 
@@ -1251,18 +1258,25 @@ class RayPPOTrainer:
                     try:
                         conv_dict = batch_metrics.conversation_metrics.model_dump()
 
-                        # Extract only valid numeric metrics using standardized filtering
-                        numeric_conv_metrics = MetricsAggregator.filter_numeric_metrics(conv_dict)
-                        for key, value in numeric_conv_metrics.items():
-                            metrics_to_log[f"conversations/{key}"] = value
+                        # Extract scalar metrics (float/int values) and expand stats objects
+                        for key, value in conv_dict.items():
+                            if isinstance(value, (int, float)):
+                                # Direct scalar metrics
+                                metrics_to_log[f"conversations/{key}"] = value
+                            elif isinstance(value, dict) and key.endswith("_stats"):
+                                # AggregatedNumericMetrics objects - expand all statistical fields
+                                base_name = key.replace("_stats", "")
+                                for stat_name, stat_value in value.items():
+                                    if isinstance(stat_value, (int, float)):
+                                        metrics_to_log[f"conversations/{base_name}/{stat_name}"] = stat_value
 
                         # Process categorical conversation metrics using unified AggregatedCategoricalMetrics
                         if conversation_metrics_data:
                             categorical_conv_results = MetricsAggregator.aggregate_categorical_fields(conversation_metrics_data)
-                            flattened_conv_categorical = MetricsAggregator.flatten_categorical_metrics(categorical_conv_results, "conversations_")
+                            flattened_conv_categorical = MetricsAggregator.flatten_categorical_metrics(categorical_conv_results, "conversations/")
                             metrics_to_log.update(flattened_conv_categorical)
 
-                        logger.debug(f"Processed {len(numeric_conv_metrics)} numeric conversation metrics and {len(flattened_conv_categorical) if conversation_metrics_data else 0} categorical conversation metrics")
+                        logger.debug(f"Processed conversation metrics: auto-detected scalars + stats expansion + {len(flattened_conv_categorical) if conversation_metrics_data else 0} categorical metrics")
                     except Exception as e:
                         logger.error(f"Failed to process conversation metrics: {e}")
 
