@@ -1144,27 +1144,24 @@ class SGLangRollout(BaseRollout):
         from verl.utils.metric import ToolMetrics
 
         for req in sorted_output_req_list:
-            # Extract individual tool metrics using unified method (similar to get_conversation_metrics)
+            # One tool metrics record per request to match batch_size
             try:
                 individual_tool_metrics = req.get_tool_metrics()
 
-                # Process each individual tool execution record
-                # Note: all_tool_metrics is a flat list of individual tool executions across all requests
-                for metrics_dict in individual_tool_metrics:
-                    try:
-                        # Validate that this is a properly formatted ToolMetrics record
-                        is_valid, missing_fields = self._validate_tool_metrics_structure(metrics_dict)
-                        if is_valid:
-                            validated_metrics = ToolMetrics(**metrics_dict)
-                            all_tool_metrics.append(validated_metrics.model_dump())
-                        else:
-                            logger.warning(f"Invalid tool metrics structure for request {req.request_id}: missing fields {missing_fields}")
-                            all_tool_metrics.append(metrics_dict)  # fallback to raw dict
-                    except Exception as validation_error:
-                        logger.warning(f"ToolMetrics validation failed for request {req.request_id}: {validation_error}")
-                        all_tool_metrics.append(metrics_dict)  # fallback to raw dict
-
-                # No explicit handling for requests without tool calls - they simply contribute no records
+                if individual_tool_metrics:
+                    # Use first tool execution as representative (temporary fix for batch_size alignment)
+                    representative_metrics = individual_tool_metrics[0]
+                    # Ensure it passes validation
+                    is_valid, missing_fields = self._validate_tool_metrics_structure(representative_metrics)
+                    if is_valid:
+                        validated_metrics = ToolMetrics(**representative_metrics)
+                        all_tool_metrics.append(validated_metrics.model_dump())
+                    else:
+                        logger.warning(f"Invalid tool metrics structure for request {req.request_id}: missing fields {missing_fields}")
+                        all_tool_metrics.append(representative_metrics)  # fallback
+                else:
+                    # No tool calls in this request - append empty dict to maintain batch consistency
+                    all_tool_metrics.append({})
 
             except Exception as e:
                 # Critical error in tool metrics processing, create minimal fallback
