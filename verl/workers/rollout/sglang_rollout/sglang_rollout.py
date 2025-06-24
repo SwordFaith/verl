@@ -509,17 +509,33 @@ class SGLangRollout(BaseRollout):
             "tool_calls_per_turn": tool_calls_per_turn,
         }
 
-    def _validate_tool_metrics_structure(self, metrics_dict: dict) -> bool:
+    def _validate_tool_metrics_structure(self, metrics_dict: dict) -> tuple[bool, list[str]]:
         """Validate that metrics_dict contains all required ToolMetrics fields.
 
         Args:
             metrics_dict: Dictionary to validate
 
         Returns:
-            True if all required fields are present, False otherwise
+            Tuple of (is_valid, missing_fields_list)
         """
-        required_fields = ["tool_name", "instance_id", "latency_ms", "success", "response_char_length", "tool_calls_per_trajectory", "tool_calls_per_turn"]
-        return all(field in metrics_dict for field in required_fields)
+        # Complete ToolMetrics schema validation (ToolMetrics + BaseMetrics inheritance)
+        required_fields = [
+            # Core ToolMetrics fields
+            "tool_name",
+            "instance_id",
+            "latency_ms",
+            "success",
+            "response_char_length",
+            "tool_calls_per_trajectory",
+            "tool_calls_per_turn",
+            # BaseMetrics fields (inherited)
+            "request_id",
+            "batch_data_id",
+            "rollout_offset",
+            "timestamp",
+        ]
+        missing_fields = [field for field in required_fields if field not in metrics_dict]
+        return len(missing_fields) == 0, missing_fields
 
     def _create_fallback_tool_metrics(self, request_id: str) -> dict:
         """Create minimal fallback tool metrics to prevent data loss.
@@ -1137,11 +1153,12 @@ class SGLangRollout(BaseRollout):
                 for metrics_dict in individual_tool_metrics:
                     try:
                         # Validate that this is a properly formatted ToolMetrics record
-                        if self._validate_tool_metrics_structure(metrics_dict):
+                        is_valid, missing_fields = self._validate_tool_metrics_structure(metrics_dict)
+                        if is_valid:
                             validated_metrics = ToolMetrics(**metrics_dict)
                             all_tool_metrics.append(validated_metrics.model_dump())
                         else:
-                            logger.warning(f"Invalid tool metrics structure for request {req.request_id}: missing required fields")
+                            logger.warning(f"Invalid tool metrics structure for request {req.request_id}: missing fields {missing_fields}")
                             all_tool_metrics.append(metrics_dict)  # fallback to raw dict
                     except Exception as validation_error:
                         logger.warning(f"ToolMetrics validation failed for request {req.request_id}: {validation_error}")
