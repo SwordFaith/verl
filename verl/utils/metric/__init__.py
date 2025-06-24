@@ -20,8 +20,9 @@ from .aggregation import (
     aggregate_tool_metrics,
 )
 from .schemas import (
+    AggregatedCategoricalMetrics,
     AggregatedConversationMetrics,
-    AggregatedMetrics,
+    AggregatedNumericMetrics,
     AggregatedToolMetrics,
     BaseMetrics,
     BatchMetrics,
@@ -42,7 +43,8 @@ __all__ = [
     "BaseMetrics",
     "ToolMetrics",
     "ConversationMetrics",  # Now unified with termination + turn data
-    "AggregatedMetrics",
+    "AggregatedNumericMetrics",
+    "AggregatedCategoricalMetrics",
     "AggregatedToolMetrics",
     "AggregatedConversationMetrics",  # Now includes termination aggregations
     "BatchMetrics",

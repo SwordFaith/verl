@@ -34,7 +34,6 @@ class ToolMetrics(BaseMetrics):
 
     # Tool execution context
     tool_name: str = Field(..., description="Name of the executed tool")
-    instance_id: str = Field(..., description="Tool instance identifier")
 
     # Base execution metrics
     latency_ms: float = Field(..., ge=0, description="Tool execution latency in milliseconds")
@@ -109,62 +108,71 @@ class ConversationMetrics(BaseMetrics):
         return v
 
 
-class AggregatedMetrics(BaseModel):
+class AggregatedNumericMetrics(BaseModel):
     """Base class for aggregated metrics results."""
 
     # Statistical aggregations
     count: int = Field(..., ge=0, description="Number of samples")
-    min_value: float = Field(..., description="Minimum value")
-    max_value: float = Field(..., description="Maximum value")
-    avg_value: float = Field(..., description="Average value")
-    total_value: float = Field(..., description="Total/sum value")
-
-    # Raw values for further analysis
-    raw_values: List[float] = Field(default_factory=list, description="Raw values used in aggregation")
+    min: float = Field(..., description="Minimum value")
+    max: float = Field(..., description="Maximum value")
+    avg: float = Field(..., description="Average value")
+    std: float = Field(..., description="Standard deviation value")
+    sum: float = Field(..., description="Sum value")
 
 
-class AggregatedToolMetrics(AggregatedMetrics):
+class AggregatedCategoricalMetrics(BaseModel):
+    """Aggregated categorical metrics."""
+
+    # Categorical aggregations
+    value_counts: Dict[str, int] = Field(default_factory=dict, description="Count of each value")
+    value_ratios: Dict[str, float] = Field(default_factory=dict, description="Ratio of each value")
+
+
+class AggregatedToolMetrics(BaseModel):
     """Aggregated tool execution metrics."""
 
     # Tool-specific aggregations
-    tool_calls_per_trajectory_stats: AggregatedMetrics
-    tool_calls_per_turn_stats: AggregatedMetrics
-    latency_ms_stats: AggregatedMetrics
-    response_char_length_stats: AggregatedMetrics
+    tool_calls_per_trajectory_stats: AggregatedNumericMetrics
+    tool_calls_per_turn_stats: AggregatedNumericMetrics
+    latency_ms_stats: AggregatedNumericMetrics
+    response_char_length_stats: AggregatedNumericMetrics
     success_rate: float = Field(..., ge=0, le=1, description="Overall success rate")
+    tool_names_metrics: AggregatedCategoricalMetrics = Field(..., description="Tool names distribution")
+
+    # Optional categorical metrics (only present if data contains these fields)
+    error_type_metrics: Optional[AggregatedCategoricalMetrics] = Field(None, description="Error type distribution (if present)")
 
     # Per-tool breakdown
-    tool_specific_stats: Dict[str, AggregatedMetrics] = Field(default_factory=dict)
-    tools_used: List[str] = Field(default_factory=list, description="List of unique tools used")
+    tool_specific_stats: Dict[str, AggregatedNumericMetrics | AggregatedCategoricalMetrics] = Field(default_factory=dict)
 
 
-class AggregatedConversationMetrics(AggregatedMetrics):
+class AggregatedConversationMetrics(BaseModel):
     """Aggregated conversation flow metrics (unified with termination)."""
 
     # Conversation flow aggregations
-    total_turns_stats: AggregatedMetrics
-    total_tokens_stats: AggregatedMetrics
-    total_chars_stats: AggregatedMetrics
+    total_turns_stats: AggregatedNumericMetrics
+    total_tokens_stats: AggregatedNumericMetrics
+    total_chars_stats: AggregatedNumericMetrics
 
     # Role-specific aggregations
-    assistant_turns_stats: AggregatedMetrics
-    user_turns_stats: AggregatedMetrics
-    tool_turns_stats: AggregatedMetrics
+    assistant_turns_stats: AggregatedNumericMetrics
+    user_turns_stats: AggregatedNumericMetrics
+    tool_turns_stats: AggregatedNumericMetrics
 
     # Tool usage aggregations
-    assistant_tool_calls_stats: AggregatedMetrics
-    turns_with_tools_stats: AggregatedMetrics
-    tool_turn_ratio_stats: AggregatedMetrics
-    assistant_turn_ratio_stats: AggregatedMetrics
+    assistant_tool_calls_stats: AggregatedNumericMetrics
+    turns_with_tools_stats: AggregatedNumericMetrics
+    tool_turn_ratio_stats: AggregatedNumericMetrics
+    assistant_turn_ratio_stats: AggregatedNumericMetrics
 
     # Turn length aggregations
-    turn_token_lengths_stats: AggregatedMetrics
-    turn_char_lengths_stats: AggregatedMetrics
+    turn_token_lengths_stats: AggregatedNumericMetrics
+    turn_char_lengths_stats: AggregatedNumericMetrics
 
-    # Termination aggregations (merged from TerminationMetrics)
-    termination_reason_distribution: Dict[str, float] = Field(default_factory=dict, description="Distribution of termination reasons")
-    termination_turn_count_stats: AggregatedMetrics
-    termination_token_count_stats: AggregatedMetrics
+    # Termination aggregations (unified with AggregatedCategoricalMetrics)
+    termination_reason_metrics: AggregatedCategoricalMetrics
+    termination_turn_count_stats: AggregatedNumericMetrics
+    termination_token_count_stats: AggregatedNumericMetrics
 
 
 class BatchMetrics(BaseModel):

@@ -204,9 +204,6 @@ class AsyncRolloutRequest(BaseModel):
             self.metrics[tool_id] = []
         self.metrics[tool_id].append(metrics)
 
-    # REMOVED: get_aggregated_tool_metrics() method replaced by standardized verl.utils.metric.aggregate_tool_metrics()
-    # This 144-line method was redundant with the centralized aggregation logic
-
     def track_turn(self, role: str, turn_stats: Dict[str, Any]):
         """Unified turn tracking (replaces separate conversation + turn tracking)"""
         import time

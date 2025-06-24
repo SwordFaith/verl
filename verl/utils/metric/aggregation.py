@@ -23,8 +23,9 @@ from typing import Any, Dict, List, Optional, TypeVar, Union
 import numpy as np
 
 from .schemas import (
+    AggregatedCategoricalMetrics,
     AggregatedConversationMetrics,
-    AggregatedMetrics,
+    AggregatedNumericMetrics,
     AggregatedToolMetrics,
     BatchMetrics,
     ConversationMetrics,
@@ -38,13 +39,13 @@ class MetricsAggregator:
     """Shared aggregation logic for all metric types."""
 
     @staticmethod
-    def compute_basic_stats(values: List[Union[int, float]]) -> AggregatedMetrics:
+    def compute_basic_stats(values: List[Union[int, float]]) -> AggregatedNumericMetrics:
         """Compute basic statistical aggregations for a list of values."""
         if not values:
-            return AggregatedMetrics(count=0, min_value=0.0, max_value=0.0, avg_value=0.0, total_value=0.0, raw_values=[])
+            return AggregatedNumericMetrics(count=0, min=0.0, max=0.0, avg=0.0, std=0.0, sum=0.0)
 
         values_array = np.array(values, dtype=float)
-        return AggregatedMetrics(count=len(values), min_value=float(np.min(values_array)), max_value=float(np.max(values_array)), avg_value=float(np.mean(values_array)), total_value=float(np.sum(values_array)), raw_values=values.copy())
+        return AggregatedNumericMetrics(count=len(values), min=float(np.min(values_array)), max=float(np.max(values_array)), avg=float(np.mean(values_array)), std=float(np.std(values_array)), sum=float(np.sum(values_array)))
 
     @staticmethod
     def compute_success_rate(success_list: List[bool]) -> float:
@@ -65,6 +66,24 @@ class MetricsAggregator:
 
         total = len(items)
         return {item: count / total for item, count in counts.items()}
+
+    @staticmethod
+    def compute_categorical_metrics(items: List[str]) -> AggregatedCategoricalMetrics:
+        """Compute categorical metrics aggregation from list of string values."""
+        if not items:
+            return AggregatedCategoricalMetrics(value_counts={}, value_ratios={})
+
+        counts = defaultdict(int)
+        for item in items:
+            if item is not None:
+                counts[str(item)] += 1
+
+        total = len([item for item in items if item is not None])
+        if total == 0:
+            return AggregatedCategoricalMetrics(value_counts={}, value_ratios={})
+
+        ratios = {item: count / total for item, count in counts.items()}
+        return AggregatedCategoricalMetrics(value_counts=dict(counts), value_ratios=ratios)
 
     @staticmethod
     def extract_values(metrics_list: List[T], field_name: str) -> List[Any]:
@@ -96,29 +115,37 @@ class MetricsAggregator:
         return dict(groups)
 
     @staticmethod
-    def aggregate_categorical_fields(data_list: List[Dict[str, Any]], prefix: str = "") -> Dict[str, Any]:
+    def aggregate_categorical_fields(data_list: List[Dict[str, Any]], exclude_fields: set = None) -> Dict[str, AggregatedCategoricalMetrics]:
         """
-        Aggregate categorical (string/boolean) fields into count/ratio statistics for logging compatibility.
-
-        Converts non-numeric fields into numeric format:
-        - Boolean fields: true_count, true_ratio, false_count, false_ratio
-        - String fields: top-5 values with count/ratio for each + summary stats
+        Aggregate categorical (string/boolean) fields into AggregatedCategoricalMetrics objects.
 
         Args:
             data_list: List of metric dictionaries containing mixed data types
-            prefix: Prefix for metric names (e.g., "tools_", "conversations_")
+            exclude_fields: Set of field names to exclude from categorical aggregation.
+                          If None, defaults to common unique identifiers.
 
         Returns:
-            Dictionary with numeric-only metrics suitable for WandB/TensorBoard
+            Dictionary mapping field names to AggregatedCategoricalMetrics objects
         """
-        aggregated = {}
+        result = {}
         if not data_list:
-            return aggregated
+            return result
 
-        # Filter out empty/invalid data
-        valid_data = [data for data in data_list if data and isinstance(data, dict)]
+        # Default exclude fields: common unique identifiers that produce meaningless statistics
+        if exclude_fields is None:
+            exclude_fields = {"request_id", "instance_id", "batch_data_id", "rollout_offset", "timestamp"}
+
+        # Filter out empty/invalid data and apply field exclusion
+        valid_data = []
+        for data in data_list:
+            if data and isinstance(data, dict):
+                # Exclude unique identifiers that produce meaningless statistics
+                filtered_item = {k: v for k, v in data.items() if k not in exclude_fields}
+                if filtered_item:  # Only add if there are remaining fields after filtering
+                    valid_data.append(filtered_item)
+
         if not valid_data:
-            return aggregated
+            return result
 
         # Collect all categorical fields (non-numeric types)
         categorical_fields = set()
@@ -132,45 +159,19 @@ class MetricsAggregator:
         for field in categorical_fields:
             # Extract non-null values for this field
             values = [data.get(field) for data in valid_data if field in data and data.get(field) is not None]
-            total_count = len(values)
 
-            if total_count > 0:
-                # Boolean type: convert to true/false counts and ratios
+            if values:
+                # Convert all values to strings for consistent handling
                 if all(isinstance(v, bool) for v in values):
-                    true_count = sum(1 for v in values if v is True)
-                    false_count = total_count - true_count
-
-                    aggregated[f"{prefix}{field}_true_count"] = true_count
-                    aggregated[f"{prefix}{field}_true_ratio"] = true_count / total_count if total_count > 0 else 0.0
-                    aggregated[f"{prefix}{field}_false_count"] = false_count
-                    aggregated[f"{prefix}{field}_false_ratio"] = false_count / total_count if total_count > 0 else 0.0
-
-                # String type: convert to top-K value counts and ratios
+                    # Convert boolean to string
+                    str_values = ["true" if v else "false" for v in values]
                 else:
-                    # Count occurrences of each value
-                    value_counts = {}
-                    for v in values:
-                        v_str = str(v)
-                        value_counts[v_str] = value_counts.get(v_str, 0) + 1
+                    # Convert all to string
+                    str_values = [str(v) for v in values]
 
-                    # Top-5 most frequent values to prevent metric explosion
-                    top_values = sorted(value_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+                result[field] = MetricsAggregator.compute_categorical_metrics(str_values)
 
-                    for value_name, count in top_values:
-                        # Create safe metric name (replace special characters)
-                        safe_name = value_name.replace("/", "_").replace(" ", "_").replace("-", "_")
-                        safe_name = safe_name.replace(".", "_").replace(":", "_")[:20]  # Limit length
-                        safe_name = "".join(c for c in safe_name if c.isalnum() or c == "_")  # Keep only safe chars
-
-                        if safe_name:  # Only add if name is valid after cleaning
-                            aggregated[f"{prefix}{field}_{safe_name}_count"] = count
-                            aggregated[f"{prefix}{field}_{safe_name}_ratio"] = count / total_count
-
-                    # Summary statistics for the field
-                    aggregated[f"{prefix}{field}_total_samples"] = total_count
-                    aggregated[f"{prefix}{field}_unique_values"] = len(value_counts)
-
-        return aggregated
+        return result
 
     @staticmethod
     def filter_numeric_metrics(metrics_dict: Dict[str, Any], exclude_fields: set = None) -> Dict[str, Any]:
@@ -179,13 +180,14 @@ class MetricsAggregator:
 
         Args:
             metrics_dict: Dictionary of mixed metric types
-            exclude_fields: Set of field names to exclude from filtering
+            exclude_fields: Set of field names to exclude from filtering (optional)
 
         Returns:
             Dictionary containing only valid numeric metrics
         """
         if exclude_fields is None:
-            exclude_fields = {"count", "min_value", "max_value", "avg_value", "total_value", "raw_values"}
+            # No fields excluded by default since raw_values was removed from schema
+            exclude_fields = set()
 
         filtered = {}
         for key, value in metrics_dict.items():
@@ -195,6 +197,49 @@ class MetricsAggregator:
                     filtered[key] = value
 
         return filtered
+
+    @staticmethod
+    def flatten_categorical_metrics(categorical_metrics: Dict[str, AggregatedCategoricalMetrics], prefix: str = "") -> Dict[str, Any]:
+        """
+        Flatten AggregatedCategoricalMetrics to monitoring-compatible format.
+
+        Args:
+            categorical_metrics: Dictionary mapping field names to AggregatedCategoricalMetrics
+            prefix: Prefix for metric names (e.g., "tools_", "conversations_")
+
+        Returns:
+            Dictionary with flattened categorical metrics suitable for monitoring systems
+        """
+        flattened = {}
+
+        for field_name, cat_metrics in categorical_metrics.items():
+            # Add counts
+            for value, count in cat_metrics.value_counts.items():
+                # Create safe metric name
+                safe_value = value.replace("/", "_").replace(" ", "_").replace("-", "_")
+                safe_value = safe_value.replace(".", "_").replace(":", "_")[:20]
+                safe_value = "".join(c for c in safe_value if c.isalnum() or c == "_")
+
+                if safe_value:
+                    flattened[f"{prefix}{field_name}_{safe_value}_count"] = count
+
+            # Add ratios
+            for value, ratio in cat_metrics.value_ratios.items():
+                # Create safe metric name
+                safe_value = value.replace("/", "_").replace(" ", "_").replace("-", "_")
+                safe_value = safe_value.replace(".", "_").replace(":", "_")[:20]
+                safe_value = "".join(c for c in safe_value if c.isalnum() or c == "_")
+
+                if safe_value:
+                    flattened[f"{prefix}{field_name}_{safe_value}_ratio"] = ratio
+
+            # Add summary statistics
+            total_samples = sum(cat_metrics.value_counts.values())
+            unique_values = len(cat_metrics.value_counts)
+            flattened[f"{prefix}{field_name}_total_samples"] = total_samples
+            flattened[f"{prefix}{field_name}_unique_values"] = unique_values
+
+        return flattened
 
 
 def aggregate_tool_metrics(metrics_list: List[Union[ToolMetrics, Dict]]) -> AggregatedToolMetrics:
@@ -208,17 +253,15 @@ def aggregate_tool_metrics(metrics_list: List[Union[ToolMetrics, Dict]]) -> Aggr
         AggregatedToolMetrics with comprehensive tool statistics
     """
     if not metrics_list:
+        empty_stats = AggregatedNumericMetrics(count=0, min=0.0, max=0.0, avg=0.0, std=0.0, sum=0.0)
+        empty_categorical = AggregatedCategoricalMetrics(value_counts={}, value_ratios={})
         return AggregatedToolMetrics(
-            count=0,
-            min_value=0.0,
-            max_value=0.0,
-            avg_value=0.0,
-            total_value=0.0,
-            tool_calls_per_trajectory_stats=AggregatedMetrics(count=0, min_value=0.0, max_value=0.0, avg_value=0.0, total_value=0.0),
-            tool_calls_per_turn_stats=AggregatedMetrics(count=0, min_value=0.0, max_value=0.0, avg_value=0.0, total_value=0.0),
-            latency_ms_stats=AggregatedMetrics(count=0, min_value=0.0, max_value=0.0, avg_value=0.0, total_value=0.0),
-            response_char_length_stats=AggregatedMetrics(count=0, min_value=0.0, max_value=0.0, avg_value=0.0, total_value=0.0),
+            tool_calls_per_trajectory_stats=empty_stats,
+            tool_calls_per_turn_stats=empty_stats,
+            latency_ms_stats=empty_stats,
+            response_char_length_stats=empty_stats,
             success_rate=0.0,
+            tool_names_metrics=empty_categorical,
         )
 
     aggregator = MetricsAggregator()
@@ -231,22 +274,23 @@ def aggregate_tool_metrics(metrics_list: List[Union[ToolMetrics, Dict]]) -> Aggr
     success_values = aggregator.extract_values(metrics_list, "success")
     tool_names = aggregator.extract_values(metrics_list, "tool_name")
 
+    # Extract optional categorical metrics
+    error_types = aggregator.extract_values(metrics_list, "error_type")
+    # Filter out None values for error_type
+    error_types = [et for et in error_types if et is not None]
+
     # Compute aggregations
     result = AggregatedToolMetrics(
-        count=len(metrics_list),
-        min_value=0.0,  # Will be computed based on primary metric
-        max_value=0.0,
-        avg_value=0.0,
-        total_value=0.0,
         tool_calls_per_trajectory_stats=aggregator.compute_basic_stats(tool_calls_per_trajectory),
         tool_calls_per_turn_stats=aggregator.compute_basic_stats(tool_calls_per_turn),
         latency_ms_stats=aggregator.compute_basic_stats(latency_ms),
         response_char_length_stats=aggregator.compute_basic_stats(response_char_length),
         success_rate=aggregator.compute_success_rate(success_values),
-        tools_used=list(set(tool_names)) if tool_names else [],
+        tool_names_metrics=aggregator.compute_categorical_metrics(tool_names),
+        error_type_metrics=aggregator.compute_categorical_metrics(error_types) if error_types else None,
     )
 
-    # Compute per-tool statistics
+    # Compute per-tool statistics (both numeric and categorical)
     tool_groups = aggregator.group_by_field(metrics_list, "tool_name")
     tool_specific_stats = {}
 
@@ -254,14 +298,20 @@ def aggregate_tool_metrics(metrics_list: List[Union[ToolMetrics, Dict]]) -> Aggr
         tool_latencies = aggregator.extract_values(tool_metrics, "latency_ms")
         tool_specific_stats[tool_name] = aggregator.compute_basic_stats(tool_latencies)
 
-    result.tool_specific_stats = tool_specific_stats
+        # Add categorical metrics for this tool
+        tool_dicts = []
+        for metric in tool_metrics:
+            if hasattr(metric, "__dict__"):
+                tool_dicts.append(metric.__dict__)
+            elif isinstance(metric, dict):
+                tool_dicts.append(metric)
 
-    # Set primary metric stats (using latency as primary)
-    if latency_ms:
-        result.min_value = result.latency_ms_stats.min_value
-        result.max_value = result.latency_ms_stats.max_value
-        result.avg_value = result.latency_ms_stats.avg_value
-        result.total_value = result.latency_ms_stats.total_value
+        if tool_dicts:
+            categorical_metrics = aggregator.aggregate_categorical_fields(tool_dicts)
+            for field_name, cat_metrics in categorical_metrics.items():
+                tool_specific_stats[f"{tool_name}_{field_name}"] = cat_metrics
+
+    result.tool_specific_stats = tool_specific_stats
 
     return result
 
@@ -277,13 +327,9 @@ def aggregate_conversation_metrics(metrics_list: List[Union[ConversationMetrics,
         AggregatedConversationMetrics with comprehensive conversation and termination statistics
     """
     if not metrics_list:
-        empty_stats = AggregatedMetrics(count=0, min_value=0.0, max_value=0.0, avg_value=0.0, total_value=0.0)
+        empty_stats = AggregatedNumericMetrics(count=0, min=0.0, max=0.0, avg=0.0, std=0.0, sum=0.0)
+        empty_categorical = AggregatedCategoricalMetrics(value_counts={}, value_ratios={})
         return AggregatedConversationMetrics(
-            count=0,
-            min_value=0.0,
-            max_value=0.0,
-            avg_value=0.0,
-            total_value=0.0,
             total_turns_stats=empty_stats,
             total_tokens_stats=empty_stats,
             total_chars_stats=empty_stats,
@@ -296,7 +342,7 @@ def aggregate_conversation_metrics(metrics_list: List[Union[ConversationMetrics,
             assistant_turn_ratio_stats=empty_stats,
             turn_token_lengths_stats=empty_stats,
             turn_char_lengths_stats=empty_stats,
-            termination_reason_distribution={},
+            termination_reason_metrics=empty_categorical,
             termination_turn_count_stats=empty_stats,
             termination_token_count_stats=empty_stats,
         )
@@ -339,11 +385,6 @@ def aggregate_conversation_metrics(metrics_list: List[Union[ConversationMetrics,
 
     # Compute aggregations
     result = AggregatedConversationMetrics(
-        count=len(metrics_list),
-        min_value=0.0,
-        max_value=0.0,
-        avg_value=0.0,
-        total_value=0.0,
         # Conversation flow aggregations
         total_turns_stats=aggregator.compute_basic_stats(total_turns),
         total_tokens_stats=aggregator.compute_basic_stats(total_tokens),
@@ -361,17 +402,10 @@ def aggregate_conversation_metrics(metrics_list: List[Union[ConversationMetrics,
         turn_token_lengths_stats=aggregator.compute_basic_stats(all_turn_token_lengths),
         turn_char_lengths_stats=aggregator.compute_basic_stats(all_turn_char_lengths),
         # Termination aggregations (unified)
-        termination_reason_distribution=aggregator.compute_distribution(termination_reasons),
+        termination_reason_metrics=aggregator.compute_categorical_metrics(termination_reasons),
         termination_turn_count_stats=aggregator.compute_basic_stats(termination_turn_counts),
         termination_token_count_stats=aggregator.compute_basic_stats(termination_token_counts),
     )
-
-    # Set primary metric stats (using total_turns as primary)
-    if total_turns:
-        result.min_value = result.total_turns_stats.min_value
-        result.max_value = result.total_turns_stats.max_value
-        result.avg_value = result.total_turns_stats.avg_value
-        result.total_value = result.total_turns_stats.total_value
 
     return result
 
