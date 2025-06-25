@@ -364,6 +364,12 @@ class SandboxFusionTool(BaseTool):
                 # Check for API request errors first
                 if metadata.get("api_request_error"):
                     error_msg = metadata["api_request_error"]
+                    # Log payload and response when API request fails
+                    payload = metadata.get("payload", "N/A")
+                    response_text = metadata.get("response_text", "N/A")
+                    if self.tool_logger:
+                        self.tool_logger.error(f"API request error for instance {instance_id}: {error_msg}, payload: {payload}, response: {response_text}")
+
                     # Check if this is a retryable error (like Gateway Timeout)
                     if "Gateway Timeout" in error_msg and attempt < max_retries - 1:
                         delay = random.uniform(1, 5)
@@ -371,9 +377,6 @@ class SandboxFusionTool(BaseTool):
                             self.tool_logger.warning(f"API request failed with Gateway Timeout, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
                         time.sleep(delay)
                         continue
-
-                    if self.tool_logger:
-                        self.tool_logger.error(f"API request error for instance {instance_id}: {error_msg}")
                     return f"Error in calling code interpreter: {error_msg}", False, {}
 
                 # Check API status
@@ -382,8 +385,12 @@ class SandboxFusionTool(BaseTool):
                     error_msg = "Sandbox error occurred"
                     if metadata.get("api_response"):
                         error_msg += f": {metadata['api_response']}"
+
+                    # Log payload and response for SandboxError
+                    payload = metadata.get("payload", "N/A")
+                    response_text = metadata.get("response_text", "N/A")
                     if self.tool_logger:
-                        self.tool_logger.error(f"Sandbox error for instance {instance_id}: {error_msg}")
+                        self.tool_logger.error(f"Sandbox error for instance {instance_id}: {error_msg}, payload: {payload}, response: {response_text}")
                     return f"Error in calling code interpreter: {error_msg}", False, {}
 
                 elif api_status == "Failed":

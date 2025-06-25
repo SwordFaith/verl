@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_LANGUAGES = ["python", "cpp", "nodejs", "go", "go_test", "java", "php", "csharp", "bash", "typescript", "sql", "rust", "cuda", "lua", "R", "perl", "D_ut", "ruby", "scala", "julia", "pytest", "junit", "kotlin_script", "jest", "verilog", "python_gpu", "lean", "swift", "racket"]
 
 
-def call_sandbox_api(sandbox_fusion_url: str, code: str, stdin: str, compile_timeout: int, run_timeout: int, language: str = "python") -> Tuple[Optional[Dict[str, Any]], Optional[str]]:  # <-- Remove request_id parameter
+def call_sandbox_api(sandbox_fusion_url: str, code: str, stdin: str, compile_timeout: int, run_timeout: int, language: str = "python") -> Tuple[Optional[Dict[str, Any]], Optional[str], str, Optional[str]]:  # <-- Update return type annotation
     """
     Calls the remote sandbox API to execute code with retry logic for Gateway Timeout,
     using increasing delay between retries. Logs internal calls with a unique ID.
@@ -48,9 +48,10 @@ def call_sandbox_api(sandbox_fusion_url: str, code: str, stdin: str, compile_tim
         language: The programming language of the code (e.g., "python", "cpp", "java"). Defaults to "python".
 
     Returns:
-        A tuple (response_json, error_message).
+        A tuple (response_json, error_message, payload, response_text).
         If successful, response_json is the API's returned JSON object, error_message is None.
         If failed after retries, response_json is None, error_message contains the error information.
+        payload is the request payload string, response_text is the raw response text.
     """
     request_id = str(uuid.uuid4())  # <-- Generate request_id internally
     log_prefix = f"[Request ID: {request_id}] "  # <-- Create log prefix
@@ -58,7 +59,7 @@ def call_sandbox_api(sandbox_fusion_url: str, code: str, stdin: str, compile_tim
     if language not in SUPPORTED_LANGUAGES:
         error_msg = f"{log_prefix}Unsupported language: {language}"
         logger.error(error_msg)
-        return None, error_msg
+        return None, error_msg, "", None
 
     payload = json.dumps(
         {
@@ -76,6 +77,7 @@ def call_sandbox_api(sandbox_fusion_url: str, code: str, stdin: str, compile_tim
     request_timeout = compile_timeout + run_timeout + API_TIMEOUT
 
     last_error = None  # Store the last error encountered
+    response_text = None  # Store the response text
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -86,6 +88,8 @@ def call_sandbox_api(sandbox_fusion_url: str, code: str, stdin: str, compile_tim
                 data=payload,
                 timeout=request_timeout,  # Use the calculated timeout
             )
+
+            response_text = response.text  # Store response text
 
             # Check for Gateway Timeout (504) specifically for retrying
             if response.status_code == 504:
@@ -105,13 +109,14 @@ def call_sandbox_api(sandbox_fusion_url: str, code: str, stdin: str, compile_tim
 
             # If successful (status code 2xx)
             logger.info(f"{log_prefix}Sandbox API call successful on attempt {attempt + 1}")  # <-- Use internal log_prefix
-            return response.json(), None
+            return response.json(), None, payload, response_text
 
         except requests.exceptions.RequestException as e:
             last_error = f"{log_prefix}API Request Error: {e}"  # <-- Use internal log_prefix
             break  # Exit retry loop on non-504 request errors
         except json.JSONDecodeError as e:
             raw_response_text = response.text if "response" in locals() else "N/A"
+            response_text = raw_response_text
             last_error = f"{log_prefix}API Response JSON Decode Error: {e}"  # <-- Use internal log_prefix
             break  # Exit retry loop on JSON decode errors
         except Exception as e:
@@ -122,13 +127,15 @@ def call_sandbox_api(sandbox_fusion_url: str, code: str, stdin: str, compile_tim
     logger.error(f"{log_prefix}Sandbox API call failed. Last error: {last_error}")  # <-- Use internal log_prefix
     # Return the error message without the prefix, as the caller doesn't need the internal ID
     # Ensure API call failure returns error message, leading to -1 in check_correctness
-    return None, last_error.replace(log_prefix, "API Call Failed: ") if last_error else "API Call Failed after retries"
+    return None, last_error.replace(log_prefix, "API Call Failed: ") if last_error else "API Call Failed after retries", payload, response_text
 
 
 def _process_single_case(case_index: int, stdin_data: Any, expected_output: Any, sandbox_fusion_url: str, generation: str, timeout: int, language: str, concurrent_semaphore: Optional[threading.Semaphore] = None, fn_name: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
     """Helper function to process a single test case."""
     api_response = None
     error_msg = None
+    payload = None  # Initialize payload
+    response_text = None  # Initialize response_text
     logger.info(f"Processing test case {case_index + 1}.")
 
     current_generation_code = generation
@@ -237,10 +244,10 @@ if __name__ == '__main__':
             # logger.debug(f"Case {case_index + 1}: Attempting to acquire semaphore.")
             with concurrent_semaphore:
                 # logger.debug(f"Case {case_index + 1}: Semaphore acquired. Calling API.")
-                api_response, error_msg = call_sandbox_api(sandbox_fusion_url=sandbox_fusion_url, code=current_generation_code, stdin=str(stdin_data), compile_timeout=timeout, run_timeout=timeout, language=language)
+                api_response, error_msg, payload, response_text = call_sandbox_api(sandbox_fusion_url=sandbox_fusion_url, code=current_generation_code, stdin=str(stdin_data), compile_timeout=timeout, run_timeout=timeout, language=language)
             # logger.debug(f"Case {case_index + 1}: Semaphore released.")
         else:
-            api_response, error_msg = call_sandbox_api(sandbox_fusion_url=sandbox_fusion_url, code=current_generation_code, stdin=str(stdin_data), compile_timeout=timeout, run_timeout=timeout, language=language)
+            api_response, error_msg, payload, response_text = call_sandbox_api(sandbox_fusion_url=sandbox_fusion_url, code=current_generation_code, stdin=str(stdin_data), compile_timeout=timeout, run_timeout=timeout, language=language)
     except Exception as e:
         error_msg = f"API Request Exception during check_correctness for case {case_index + 1}: {e}"
         logger.error(f"Case {case_index + 1}: {error_msg}")
@@ -262,6 +269,8 @@ if __name__ == '__main__':
         "api_status": None,
         "compile_status": None,
         "run_status": None,
+        "payload": payload,  # Now payload is always defined
+        "response_text": response_text,  # Now response_text is always defined
     }
     result_status = -1  # Default error: API request error or unknown sandbox error
 
