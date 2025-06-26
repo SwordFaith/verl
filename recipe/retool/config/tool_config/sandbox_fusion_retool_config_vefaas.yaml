@@ -27,8 +27,4 @@ tools:
             code:
               type: "string"
               description: "The Python code to be executed. This can include calculations, data manipulation, or any valid Python code."
-            language:
-              type: "string"
-              description: "The programming language of the code. Currently only Python is supported."
-              default: "python"
           required: ["code"]
