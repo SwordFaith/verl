@@ -249,7 +249,18 @@ class SandboxFusionTool(BaseTool):
             "error_type": self._classify_error_type(error_msg, api_status) if not success else None,
         }
 
-        return result, 0.0, success, specific_metrics
+        # Calculate reward based on execution success
+        reward = 0.001 if success else 0.0
+
+        # Accumulate reward in instance dictionary
+        if instance_id in self._instance_dict:
+            if isinstance(self._instance_dict[instance_id]["reward"], list):
+                self._instance_dict[instance_id]["reward"].append(reward)
+            else:
+                # Convert to list if it's not already
+                self._instance_dict[instance_id]["reward"] = [self._instance_dict[instance_id]["reward"], reward]
+
+        return result, reward, success, specific_metrics
 
     def _format_execution_result(self, raw_response: str, success: bool, api_metadata: dict) -> str:
         """Format execution result for better model comprehension using full API data"""
@@ -701,8 +712,10 @@ class SandboxFusionTool(BaseTool):
                 self.tool_logger.error(f"Error in get_sim_jupyter_mode_result: {e}\npayload: {payload}\nresponse: {response.text}")
             return f"Error in calling code interpreter: {response.text}", False, {}
 
-    async def calc_reward(self, instance_id: str, **kwargs) -> str:
-        return self._instance_dict[instance_id]["reward"]
+    async def calc_reward(self, instance_id: str, **kwargs) -> float:
+        # Return accumulated reward from all successful tool executions
+        reward_list = self._instance_dict[instance_id]["reward"]
+        return sum(reward_list) if isinstance(reward_list, list) else reward_list
 
     async def release(self, instance_id: str, **kwargs) -> None:
         del self._instance_dict[instance_id]

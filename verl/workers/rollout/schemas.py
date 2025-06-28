@@ -108,6 +108,10 @@ class AsyncRolloutRequest(BaseModel):
     turn_tool_calls_detail: List[int] = []
     tool_truncation_metrics: List[Dict[str, Any]] = []
 
+    # Turn-level and tool rewards for multi-turn training
+    turn_level_rewards: List[float] = []  # List[float] - rewards for each message turn from tool execute() calls, 0.0 for non-tool turns
+    tool_rewards: Dict[str, float] = {}  # Dict[str, float] - final calc_reward() scores for each tool name used in trajectory
+
     @model_validator(mode="before")
     @classmethod
     def initialize_request(cls, values):

@@ -51,6 +51,10 @@ def default_compute_score(data_source, solution_str, ground_truth, extra_info=No
         from . import math_dapo
 
         res = math_dapo.compute_score(solution_str, ground_truth)
+    elif data_source == "retool_dapo":
+        from . import retool_dapo
+
+        res = retool_dapo.compute_score(solution_str, ground_truth, extra_info)
     elif data_source in [
         "numina_aops_forum",
         "numina_synthetic_math",

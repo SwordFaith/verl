@@ -847,6 +847,9 @@ class SGLangRollout(BaseRollout):
                             **_req.tools_kwargs[tool_call.function.name].get("execute_kwargs", {}),
                         )
 
+                        # Track turn-level reward from tool execute() call
+                        _req.turn_level_rewards.append(reward)
+
                         # Assemble ToolMetrics at rollout layer
                         tool_metrics_data = self._assemble_tool_metrics(tool_name=tool_call.function.name, instance_id=_req.request_id, response=response, reward=reward, execution_info=execution_info, req=_req, tool_calls_per_turn=len(parsed_tool_calls))
 
@@ -890,6 +893,8 @@ class SGLangRollout(BaseRollout):
                 if finish_reason_type == FinishReasonTypeEnum.LENGTH:
                     turn_stats = _req.add_assistant_message(self.tokenizer, content)
                     _req.track_turn("assistant", turn_stats)
+                    # Add 0.0 reward for non-tool  assistant turn
+                    _req.turn_level_rewards.append(0.0)
                     _req.termination_reason = "max_tokens"
                     break
                 else:
@@ -946,9 +951,13 @@ class SGLangRollout(BaseRollout):
                         if len(parsed_tool_calls) > 0:
                             turn_stats = _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
                             _req.track_turn("assistant", turn_stats)
+                            # Add 0.0 reward for assistant turn with tool calls (actual tool rewards tracked separately)
+                            _req.turn_level_rewards.append(0.0)
                         else:
                             turn_stats = _req.add_assistant_message(self.tokenizer, content)
                             _req.track_turn("assistant", turn_stats)
+                            # Add 0.0 reward for non-tool assistant turn
+                            _req.turn_level_rewards.append(0.0)
                             finish_reason_type = FinishReasonTypeEnum.STOP
                             _req.state = AsyncRolloutRequestStateEnum.COMPLETED
                             _req.termination_reason = "eos_token"
@@ -956,6 +965,8 @@ class SGLangRollout(BaseRollout):
                     else:
                         turn_stats = _req.add_assistant_message(self.tokenizer, content)
                         _req.track_turn("assistant", turn_stats)
+                        # Add 0.0 reward for non-tool assistant turn
+                        _req.turn_level_rewards.append(0.0)
                         _req.termination_reason = "eos_token"
                         break
 
@@ -975,6 +986,10 @@ class SGLangRollout(BaseRollout):
             tool_reward_tasks.append(calc_reward_and_release_fn(name, tool))
         tool_reward_scores = await asyncio.gather(*tool_reward_tasks)
         tool_reward_scores = dict(tool_reward_scores)
+
+        # Set tool_rewards for reward manager
+        _req.tool_rewards = tool_reward_scores
+
         _req.finalize(self.tokenizer, tool_reward_scores, finish_reason_type)
 
         return _req
@@ -1139,6 +1154,7 @@ class SGLangRollout(BaseRollout):
         # Collect per-request metrics using unified dual-layer architecture
         all_tool_metrics = []
         all_conversation_metrics = []
+        turn_level_rewards = []
 
         # Import once outside the loop for performance
         from verl.utils.metric import ToolMetrics
@@ -1183,6 +1199,9 @@ class SGLangRollout(BaseRollout):
                 # Add empty placeholder for requests without conversation metrics to maintain batch consistency
                 all_conversation_metrics.append({})
 
+            # Extract turn-level rewards and tool rewards for reward manager
+            turn_level_rewards.append(req.turn_level_rewards)
+
         # free cache engine
         if self.config.free_cache_engine and self._engine is not None and self._tp_rank == 0:
             loop = asyncio.get_event_loop()
@@ -1195,6 +1214,8 @@ class SGLangRollout(BaseRollout):
                 "reward_scores": np.array(reward_scores, dtype=object),
                 "tool_metrics": np.array(all_tool_metrics, dtype=object),  # Enhanced tool metrics compatible with verl.utils.metric
                 "conversation_metrics": np.array(all_conversation_metrics, dtype=object),  # Unified conversation metrics (includes termination + turn data)
+                "turn_level_rewards": np.array(turn_level_rewards, dtype=object),  # List[float] for each request
+                "tool_rewards": np.array([req.tool_rewards for req in sorted_output_req_list], dtype=object),  # Dict[str, float] for each request
             },
         )
 
