@@ -51,7 +51,7 @@ def default_compute_score(data_source, solution_str, ground_truth, extra_info=No
         from . import math_dapo
 
         res = math_dapo.compute_score(solution_str, ground_truth)
-    elif data_source == "retool_dapo":
+    elif data_source.startswith("retool"):
         from . import retool_dapo
 
         res = retool_dapo.compute_score(solution_str, ground_truth, extra_info)

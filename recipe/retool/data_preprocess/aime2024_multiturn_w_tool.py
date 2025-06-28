@@ -50,6 +50,7 @@ if __name__ == "__main__":
                 },
             }
             example["extra_info"] = extra_info
+            example["data_source"] = "retool_aime2024"
             return example
 
         return process_fn
