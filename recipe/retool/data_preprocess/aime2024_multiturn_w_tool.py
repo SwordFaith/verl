@@ -40,6 +40,22 @@ if __name__ == "__main__":
     def make_map_fn(split):
         def process_fn(example, idx):
             orig_extra_info = example.pop("extra_info")
+            prompt = example.pop("prompt")
+            question = "\n\n".join(prompt[0]["content"].split("\n\n")[1:-1])
+            prompt = [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that can solve math problems with interaction Code Interpreter by Python code.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Solve the following problem step by step. You now have the ability to selectively write executable Python code to enhance your reasoning process.\n\n"
+                        f"**user question:**\n{question}\n\n"
+                        "Remember to place the final answer in the last part using the format: \n<answer>\n\\boxed{'The final answer goes here.'}\n</answer>"
+                    ),
+                },
+            ]
             extra_info = orig_extra_info.copy()
             extra_info["need_tools_kwargs"] = True
             extra_info["tools_kwargs"] = {
@@ -49,8 +65,9 @@ if __name__ == "__main__":
                     },
                 },
             }
-            example["extra_info"] = extra_info
             example["data_source"] = "retool_aime2024"
+            example["prompt"] = prompt
+            example["extra_info"] = extra_info
             return example
 
         return process_fn

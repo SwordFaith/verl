@@ -1,4 +1,5 @@
-# Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2023-2024 SGLang Team
+# Copyright 2025 ModelBest Inc. and/or its affiliates
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,7 +37,7 @@ def compute_single_reward(compute_score_func, data_source, response_str, ground_
         return 0.0
 
 
-def parallel_compute_rewards(compute_score_func, tasks_data, num_processes=32, timeout=300):
+def parallel_compute_rewards(compute_score_func, tasks_data, num_processes=32, timeout=300.0):
     """Parallel reward computation using ProcessPool"""
     scores = []
 
@@ -119,24 +120,22 @@ class MultiTurnRewardManager:
             prompt_ids = data_item.batch["prompts"]
             prompt_length = prompt_ids.shape[-1]
 
-            # valid_prompt_length = data_item.batch["attention_mask"][:prompt_length].sum()
-            # valid_prompt_ids = prompt_ids[-valid_prompt_length:]
-
             response_ids = data_item.batch["responses"]
             valid_response_length = data_item.batch["attention_mask"][prompt_length:].sum()
             valid_response_ids = response_ids[:valid_response_length]
 
-            # decode
-            # prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=True)
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=True)
 
             ground_truth = data_item.non_tensor_batch["reward_model"]["ground_truth"]
             data_source = data_item.non_tensor_batch[self.reward_fn_key]
 
             # Extract turn-level rewards and tool rewards from rollout
-            messages = data_item.non_tensor_batch.get("messages", None)
+            messages = None
             turn_level_rewards = None
             tool_rewards = None
+
+            if "messages" in data_item.non_tensor_batch:
+                messages = data_item.non_tensor_batch["messages"]
 
             if "turn_level_rewards" in data_item.non_tensor_batch:
                 turn_level_rewards = data_item.non_tensor_batch["turn_level_rewards"]
@@ -154,7 +153,7 @@ class MultiTurnRewardManager:
                 "response_str": response_str,
                 "ground_truth": ground_truth,
                 "extra_info": {
-                    "messages": messages,
+                    "messages": messages["messages"] if messages is not None else None,
                     "turn_level_rewards": turn_level_rewards,
                     "tool_rewards": tool_rewards,
                 },
@@ -163,6 +162,7 @@ class MultiTurnRewardManager:
             tasks_data.append(task_data)
             valid_response_lengths.append(valid_response_length)
 
+        print("tasks_data[0]:", tasks_data[0])
         # Parallel computation using configured parameters
         try:
             scores = parallel_compute_rewards(self.compute_score, tasks_data, num_processes=self.num_processes, timeout=self.timeout)
@@ -186,9 +186,10 @@ class MultiTurnRewardManager:
                 print("[ground_truth]", task_data["ground_truth"])
 
                 extra_info = task_data["extra_info"]
-                if extra_info.get("turn_level_rewards"):
+                if extra_info.get("turn_level_rewards", None) is not None:
                     print("[turn_level_rewards]", sum(extra_info["turn_level_rewards"][:20]))
-                print("[tool_rewards]", extra_info.get("tool_rewards"))
+                if extra_info.get("tool_rewards", None) is not None:
+                    print("[tool_rewards]", extra_info["tool_rewards"])
                 print("[final_reward]", score)
 
         if return_dict:

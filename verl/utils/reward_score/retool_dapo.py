@@ -1,4 +1,4 @@
-# Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2023-2024 SGLang Team
 # Copyright 2025 ModelBest Inc. and/or its affiliates
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +15,15 @@
 
 from typing import Any, Dict, List, Optional
 
+from verl.workers.rollout.schemas import Message
+
 from .math_dapo import verify as math_dapo_verify
 
 
 def compute_retool_score(
-    data_source: str,
     solution_str: str,
     ground_truth: str,
-    messages: Optional[List[Dict[str, Any]]] = None,
+    messages: Optional[List[Message]] = None,
     turn_level_rewards: Optional[List[float]] = None,
     tool_rewards: Optional[Dict[str, float]] = None,
     enable_tool_exploration_bonus: bool = True,
@@ -45,12 +46,11 @@ def compute_retool_score(
     """
     if messages is not None:
         for message in messages[::-1]:
-            if message["role"] == "assistant":
-                _solution_str = message["content"]
+            if message.role == "assistant":
+                _solution_str = message.content
                 break
     else:
         _solution_str = solution_str
-
     is_correct, normalized_pred = math_dapo_verify(_solution_str[-300:], ground_truth)
 
     if is_correct:
@@ -78,7 +78,6 @@ def compute_retool_score(
 
 
 def compute_score(
-    data_source: str,
     solution_str: str,
     ground_truth: str,
     extra_info: Optional[Dict[str, Any]] = None,
@@ -89,14 +88,12 @@ def compute_score(
     while the main logic is in compute_retool_score.
 
     Args:
-        data_source: Source identifier
         solution_str: Generated solution
         ground_truth: Expected answer
         extra_info: Contains turn_level_rewards (List[float]) and tool_rewards (Dict[str, float])
     """
-
     # Extract turn-level and tool reward information from extra_info
-    messages = extra_info.get("messages")
+    messages = None
     turn_level_rewards = None
     tool_rewards = None
 
@@ -106,7 +103,6 @@ def compute_score(
         tool_rewards = extra_info.get("tool_rewards")  # Dict[str, float] from calc_reward() calls
 
     return compute_retool_score(
-        data_source=data_source,
         solution_str=solution_str,
         ground_truth=ground_truth,
         messages=messages,
