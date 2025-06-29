@@ -876,6 +876,9 @@ class SGLangRollout(BaseRollout):
                         finish_reason_type = FinishReasonTypeEnum.LENGTH
                         _req.termination_reason = "max_tokens"
                         break
+
+                    # Add tool responses to conversation messages
+                    _req.add_tool_response_messages(self.tokenizer, tool_call_responses)
                     _req.state = AsyncRolloutRequestStateEnum.RUNNING
                 else:
                     raise ValueError(f"Unexpected tool calling last message state: {_req.messages[-1]}")
