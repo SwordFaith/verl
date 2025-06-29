@@ -117,7 +117,7 @@ if [ $RANK -eq 0 ]; then
         actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
         actor_rollout_ref.rollout.n=${n_resp_per_prompt} \
         actor_rollout_ref.rollout.multi_turn.max_turns=${MAX_ASSISTANT_TURNS} \
-        actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/recipe/retool/config/tool_config/sandbox_fusion_retool_config.yaml" \
+        actor_rollout_ref.rollout.multi_turn.tool_config_path="$PROJECT_DIR/recipe/retool/config/tool_config/sandbox_fusion_retool_sim_jupyter_config.yaml" \
         actor_rollout_ref.ref.fsdp_config.param_offload=${OFFLOAD} \
         reward_model.reward_manager=multi_turn \
         algorithm.use_kl_in_reward=False \
