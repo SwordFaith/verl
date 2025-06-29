@@ -72,6 +72,7 @@ class MultiTurnRewardManager:
         reward_fn_key: str = "data_source",
         num_processes: int = 32,
         timeout: float = 300.0,
+        enable_parallel: bool = False,
     ) -> None:
         """
         Initialize the MultiTurnRewardManager instance.
@@ -83,6 +84,7 @@ class MultiTurnRewardManager:
             reward_fn_key: The key used to access the data source in the non-tensor batch data. Defaults to "data_source".
             num_processes: Number of processes for parallel reward computation. Defaults to 32.
             timeout: Timeout in seconds for each reward computation task. Defaults to 300.0.
+            enable_parallel: Whether to enable parallel computation. Defaults to True.
         """
         self.tokenizer = tokenizer
         self.num_examine = num_examine
@@ -90,6 +92,7 @@ class MultiTurnRewardManager:
         self.reward_fn_key = reward_fn_key
         self.num_processes = num_processes
         self.timeout = timeout
+        self.enable_parallel = enable_parallel
 
     def __call__(self, data: DataProto, return_dict=False):
         """Enhanced reward calculation incorporating turn-level rewards with ProcessPool optimization."""
@@ -158,12 +161,34 @@ class MultiTurnRewardManager:
             valid_response_lengths.append(valid_response_length)
 
         print("tasks_data[0]:", tasks_data[0])
-        # Parallel computation using configured parameters
-        try:
-            results = parallel_compute_rewards(self.compute_score, tasks_data, num_processes=self.num_processes, timeout=self.timeout)
-        except Exception as e:
-            logger.error(f"Parallel reward computation failed: {e}")
-            results = [{"score": 0.0, "acc": False, "error": str(e)}] * len(tasks_data)
+
+        # Parallel computation with fallback
+        if self.enable_parallel and len(tasks_data) > 1:
+            try:
+                results = parallel_compute_rewards(self.compute_score, tasks_data, num_processes=self.num_processes, timeout=self.timeout)
+            except Exception as e:
+                logger.error(f"Parallel reward computation failed: {e}, falling back to sequential")
+                # 降级到串行处理
+                results = []
+                for task_data in tasks_data:
+                    try:
+                        result = self.compute_score(data_source=task_data["data_source"], solution_str=task_data["response_str"], ground_truth=task_data["ground_truth"], extra_info=task_data["extra_info"])
+                        results.append(result)
+                    except Exception as task_e:
+                        logger.warning(f"Task failed: {task_e}")
+                        results.append({"score": 0.0, "acc": False, "error": str(task_e)})
+        else:
+            # 串行处理
+            results = []
+            for task_data in tasks_data:
+                try:
+                    result = self.compute_score(data_source=task_data["data_source"], solution_str=task_data["response_str"], ground_truth=task_data["ground_truth"], extra_info=task_data["extra_info"])
+                    results.append(result)
+                except Exception as task_e:
+                    logger.warning(f"Task failed: {task_e}")
+                    results.append({"score": 0.0, "acc": False, "error": str(task_e)})
+
+        logger.info(f"Reward computation completed, got {len(results)} results")
 
         # Apply scores to reward tensor and debug logging
         for i, (task_data, result, valid_response_length) in enumerate(zip(tasks_data, results, valid_response_lengths)):

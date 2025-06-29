@@ -51,7 +51,7 @@ def compute_retool_score(
                 break
     else:
         _solution_str = solution_str
-    is_correct, normalized_pred = math_dapo_verify(_solution_str[-300:], ground_truth)
+    is_correct, normalized_pred = math_dapo_verify(_solution_str[-300:], ground_truth, strict_box_verify=True)
 
     if is_correct:
         reward = 1.0
