@@ -31,15 +31,15 @@ logger = logging.getLogger(__name__)
 def compute_single_reward(compute_score_func, data_source, response_str, ground_truth, extra_info):
     """Single reward computation for ProcessPool"""
     try:
-        return compute_score_func(data_source=data_source, solution_str=response_str, ground_truth=ground_truth, extra_info=extra_info)
+        return compute_score_func(solution_str=response_str, ground_truth=ground_truth, extra_info=extra_info)
     except Exception as e:
-        logger.warning(f"Reward computation failed: {e}")
-        return 0.0
+        logger.warning(f"Reward computation failed for data_source {data_source}: {e}")
+        return {"score": 0.0, "acc": False, "error": str(e)}
 
 
 def parallel_compute_rewards(compute_score_func, tasks_data, num_processes=32, timeout=300.0):
     """Parallel reward computation using ProcessPool"""
-    scores = []
+    results = []
 
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
         # Submit all tasks
@@ -52,17 +52,12 @@ def parallel_compute_rewards(compute_score_func, tasks_data, num_processes=32, t
         for future in futures:
             try:
                 result = future.result(timeout=timeout)
-                if isinstance(result, dict):
-                    scores.append(result.get("score", 0.0))
-                elif isinstance(result, (int, float, bool)):
-                    scores.append(float(result))
-                else:
-                    scores.append(0.0)
+                results.append(result)
             except Exception as e:
                 logger.warning(f"Task failed: {e}")
-                scores.append(0.0)
+                results.append({"score": 0.0, "acc": False, "error": str(e)})
 
-    return scores
+    return results
 
 
 @register("multi_turn")
@@ -165,14 +160,22 @@ class MultiTurnRewardManager:
         print("tasks_data[0]:", tasks_data[0])
         # Parallel computation using configured parameters
         try:
-            scores = parallel_compute_rewards(self.compute_score, tasks_data, num_processes=self.num_processes, timeout=self.timeout)
+            results = parallel_compute_rewards(self.compute_score, tasks_data, num_processes=self.num_processes, timeout=self.timeout)
         except Exception as e:
             logger.error(f"Parallel reward computation failed: {e}")
-            scores = [0.0] * len(tasks_data)
+            results = [{"score": 0.0, "acc": False, "error": str(e)}] * len(tasks_data)
 
         # Apply scores to reward tensor and debug logging
-        for i, (task_data, score, valid_response_length) in enumerate(zip(tasks_data, scores, valid_response_lengths)):
-            reward_tensor[i, valid_response_length - 1] = score
+        for i, (task_data, result, valid_response_length) in enumerate(zip(tasks_data, results, valid_response_lengths)):
+            if isinstance(result, dict):
+                reward = result["score"]
+                # Store the information including original reward
+                for key, value in result.items():
+                    reward_extra_info[key].append(value)
+            else:
+                reward = float(result)
+
+            reward_tensor[i, valid_response_length - 1] = reward
 
             data_source = task_data["data_source"]
 
@@ -190,7 +193,12 @@ class MultiTurnRewardManager:
                     print("[turn_level_rewards]", sum(extra_info["turn_level_rewards"][:20]))
                 if extra_info.get("tool_rewards", None) is not None:
                     print("[tool_rewards]", extra_info["tool_rewards"])
-                print("[final_reward]", score)
+
+                if isinstance(result, dict):
+                    for key, value in result.items():
+                        print(f"[{key}]", value)
+                else:
+                    print("[final_reward]", reward)
 
         if return_dict:
             return {
