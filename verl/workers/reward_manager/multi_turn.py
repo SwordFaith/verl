@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def compute_single_reward(compute_score_func, data_source, response_str, ground_truth, extra_info):
     """Single reward computation for ProcessPool"""
     try:
-        return compute_score_func(solution_str=response_str, ground_truth=ground_truth, extra_info=extra_info)
+        return compute_score_func(data_source=data_source, solution_str=response_str, ground_truth=ground_truth, extra_info=extra_info)
     except Exception as e:
         logger.warning(f"Reward computation failed for data_source {data_source}: {e}")
         return {"score": 0.0, "acc": False, "error": str(e)}
