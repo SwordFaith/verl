@@ -2,7 +2,7 @@ tools:
   - class_name: "verl.tools.sandbox_fusion_tools.SandboxFusionTool"
     config:
       type: native
-      sandbox_fusion_url: https://code-sandbox.ali-dev.modelbest.co 
+      sandbox_fusion_url: http://8080.gr98f0a3.b3jrukd7.10.32.181.62.nip.io/
       num_workers: 8192
       rate_limit: 8192
       mode: "run_code"  # run_code, run_jupyter, sim_jupyter
