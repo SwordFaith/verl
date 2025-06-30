@@ -55,17 +55,17 @@ def compute_retool_score(
 
     if is_correct:
         reward = 1.0
+        if turn_level_rewards is not None:
+            # Add penalty for failed tool executions (negative turn-level rewards)
+            negative_rewards_sum = sum(r for r in turn_level_rewards if r < 0)
+            reward += max(-1, negative_rewards_sum)
     else:
         reward = -1.0
 
-    if tool_rewards is not None:
-        for tool_name, tool_reward in tool_rewards.items():
-            if tool_reward > 0:
-                reward += tool_reward
-            else:
-                reward -= tool_reward
-    elif turn_level_rewards is not None:
-        reward += sum(turn_level_rewards)
+        if turn_level_rewards is not None:
+            # Add bonus for successful tool executions (positive turn-level rewards)
+            positive_rewards_sum = sum(r for r in turn_level_rewards if r > 0)
+            reward += min(1, positive_rewards_sum)
 
     # Detailed metrics for analysis
     result = {

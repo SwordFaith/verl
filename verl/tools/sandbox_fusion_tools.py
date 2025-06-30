@@ -250,7 +250,7 @@ class SandboxFusionTool(BaseTool):
         }
 
         # Calculate reward based on execution success
-        reward = 0.001 if success else 0.0
+        reward = 0.001 if success else -0.01
 
         # Accumulate reward in instance dictionary
         if instance_id in self._instance_dict:
