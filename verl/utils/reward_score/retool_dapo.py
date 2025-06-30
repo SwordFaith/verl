@@ -61,7 +61,6 @@ def compute_retool_score(
             reward += max(-1, negative_rewards_sum)
     else:
         reward = -1.0
-
         if turn_level_rewards is not None:
             # Add bonus for successful tool executions (positive turn-level rewards)
             positive_rewards_sum = sum(r for r in turn_level_rewards if r > 0)

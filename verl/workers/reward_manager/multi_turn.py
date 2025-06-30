@@ -196,6 +196,8 @@ class MultiTurnRewardManager:
                 reward = result["score"]
                 # Store the information including original reward
                 for key, value in result.items():
+                    if key == "pred":
+                        continue
                     reward_extra_info[key].append(value)
             else:
                 reward = float(result)
