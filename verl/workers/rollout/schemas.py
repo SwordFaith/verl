@@ -324,6 +324,10 @@ class AsyncRolloutRequest(BaseModel):
             processing_class, messages, multi_modal_data={}, tools=tools, add_generation_prompt=False, tokenize=True
         )[self.base_conv_wo_gen_prompt_end_pos :]
         self._update_input_ids(content_ids, attention_mask=True, loss_mask=False)
+        return {
+            "token_count": len(content_ids),
+            "char_count": len(content),
+        }
 
     def add_assistant_message(
         self,
@@ -344,7 +348,6 @@ class AsyncRolloutRequest(BaseModel):
 
         # Return turn-level statistics
         return {
-            "role": "assistant",
             "token_count": len(content_ids),
             "char_count": len(content),
             "has_tool_calls": tool_calls is not None,
@@ -369,7 +372,6 @@ class AsyncRolloutRequest(BaseModel):
         self._update_input_ids(content_ids, attention_mask=True, loss_mask=False)
 
         return {
-            "role": "tool",
             "token_count": len(content_ids),
             "char_count": sum(len(content) for content in contents),
             "tool_count": len(contents),
@@ -445,7 +447,6 @@ class AsyncRolloutRequest(BaseModel):
                     add_generation_prompt=False,
                     tokenize=True,
                 )[self.base_conv_wo_gen_prompt_end_pos :]
-                chars = len(msg.content)
                 tool_calls_count = 0
 
                 # Check for tool calls
@@ -454,10 +455,10 @@ class AsyncRolloutRequest(BaseModel):
 
                 # Use unified turn tracking
                 turn_stats = {
-                    "token_count": tokens,
-                    "char_count": chars,
+                    "token_count": len(tokens),
+                    "char_count": len(msg.content),
+                    "has_tool_calls": tool_calls_count > 0,
                     "tool_calls_count": tool_calls_count,
-                    "source": "initial_prompt",
                 }
                 self.track_turn(msg.role, turn_stats)
 
