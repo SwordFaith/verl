@@ -6,7 +6,7 @@ set -x
 
 HOME=/veRL/veRL
 WORLD_SIZE=4
-JOB_ID=9
+JOB_ID=5
 
 train_prompt_bsz=${TRAIN_BATCH_SIZE:-512}
 n_resp_per_prompt=${N_RESP_PER_PROMPT:-16}
@@ -14,10 +14,10 @@ train_prompt_mini_bsz=$((train_prompt_bsz / 1))
 
 PROJECT_DIR="$(pwd)"
 RESPONSE_LENGTH=${RESPONSE_LENGTH:-$((1024 * 16))}
-MAX_ASSISTANT_TURNS=${MAX_ASSISTANT_TURNS:-50}
+MAX_ASSISTANT_TURNS=${MAX_ASSISTANT_TURNS:-30}
 CONFIG_PATH="$PROJECT_DIR/recipe/retool/config"
 WANDB_PROJECT=retool_async_rl
-WANDB_EXPERIMENT_BASE=qwen2.5-32b_function_rm-retool-async-sgl-no-mask-tun-level-sft_28step-grpo-ve-bsz${train_prompt_bsz}-n${n_resp_per_prompt}-${RESPONSE_LENGTH}-${MAX_ASSISTANT_TURNS}turns
+WANDB_EXPERIMENT_BASE=qwen2.5-32b_function_rm-retool-async-sgl-no-mask-sft_28step-grpo-ve-bsz${train_prompt_bsz}-n${n_resp_per_prompt}-${RESPONSE_LENGTH}-${MAX_ASSISTANT_TURNS}turns
 CKPT_PATH=$HOME/checkpoints/${WANDB_PROJECT}/${WANDB_EXPERIMENT_BASE}
 WANDB_EXPERIMENT=${WANDB_EXPERIMENT_BASE}-v$(date +"%y%m%d%H%M")-${WORLD_SIZE}xnode-${JOB_ID}
 ACTOR_SP=${ACTOR_SP:-8}
@@ -58,10 +58,11 @@ actor_rollout_ref.actor.entropy_coeff=0 \
 actor_rollout_ref.actor.fsdp_config.param_offload=${OFFLOAD} \
 actor_rollout_ref.actor.fsdp_config.optimizer_offload=${OFFLOAD} \
 actor_rollout_ref.actor.ulysses_sequence_parallel_size=${ACTOR_SP} \
+actor_rollout_ref.actor.clip_ratio_high=0.28 \
 actor_rollout_ref.actor.strategy=fsdp2 \
 +actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
 actor_rollout_ref.rollout.tensor_model_parallel_size=${ROLLOUT_TP} \
-actor_rollout_ref.rollout.name=sglang_async \
+actor_rollout_ref.rollout.name=sglang \
 actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
 actor_rollout_ref.rollout.n=${n_resp_per_prompt} \
 actor_rollout_ref.rollout.multi_turn.max_turns=${MAX_ASSISTANT_TURNS} \
@@ -76,8 +77,8 @@ trainer.experiment_name=${WANDB_EXPERIMENT} \
 trainer.val_before_train=True \
 trainer.n_gpus_per_node=8 \
 trainer.nnodes=${WORLD_SIZE} \
-trainer.save_freq=50 \
-trainer.test_freq=20 \
+trainer.save_freq=20 \
+trainer.test_freq=5 \
 trainer.total_training_steps=500 \
 trainer.default_local_dir=${CKPT_PATH} \
 +trainer.wandb_proxy=http://100.68.175.150:3128 \
