@@ -954,7 +954,7 @@ class SGLangRollout(BaseRollout):
                         tool_call_responses.append(response)
 
                         is_tool_call_overlong, content_len = _req.check_if_tool_response_messages_overlong(
-                            self.tokenizer, tool_call_responses
+                            self.processing_class, tool_call_responses
                         )
                         turn_stats = {
                             "token_count": content_len - last_content_len,
@@ -976,7 +976,7 @@ class SGLangRollout(BaseRollout):
                         break
 
                     # Add tool responses to conversation messages
-                    _req.add_tool_response_messages(self.tokenizer, tool_call_responses)
+                    _req.add_tool_response_messages(self.processing_class, tool_call_responses)
                     _req.state = AsyncRolloutRequestStateEnum.RUNNING
                 else:
                     raise ValueError(f"Unexpected tool calling last message state: {_req.messages[-1]}")
@@ -1144,7 +1144,7 @@ class SGLangRollout(BaseRollout):
         # Set tool_rewards for reward manager
         _req.tool_rewards = tool_reward_scores
 
-        _req.finalize(self.tokenizer, tool_reward_scores, finish_reason_type)
+        _req.finalize(self.processing_class, tool_reward_scores, finish_reason_type)
 
         return _req
 
@@ -1470,7 +1470,7 @@ class SGLangRollout(BaseRollout):
                 processing_class=self.processing_class,
             )
             # Initialize conversation tracking from prompt messages
-            req.initialize_conversation_from_prompt(req.messages, self.tokenizer)
+            req.initialize_conversation_from_prompt(req.messages, self.processing_class)
 
             error_message = f"""Request {req.request_id} has mismatched lengths: 
             input_ids={len(req.input_ids)}, 

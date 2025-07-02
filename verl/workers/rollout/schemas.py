@@ -376,17 +376,16 @@ class AsyncRolloutRequest(BaseModel):
         }
 
     def check_if_tool_response_messages_overlong(
-        self, tokenizer: PreTrainedTokenizer, contents: list[str]
+        self, processing_class: Union[PreTrainedTokenizer, PreTrainedTokenizerFast, ProcessorMixin], contents: list[str]
     ) -> tuple[bool, int]:
         if not contents:
             return False
-        content = tokenizer.apply_chat_template(
-            [*BASE_CHAT_HISTORY, *self.messages[-len(contents) :]],
-            tools=([tool.model_dump() for tool in self.tool_schemas] if self.tool_schemas else None),
-            add_generation_prompt=False,
-            tokenize=False,
-        )
-        content_ids = tokenizer.encode(content[self.base_conv_wo_gen_prompt_end_pos :], add_special_tokens=False)
+
+        messages = [*BASE_CHAT_HISTORY, *self.messages[-len(contents) :]]
+        tools = [tool.model_dump() for tool in self.tool_schemas] if self.tool_schemas else None
+        content_ids = self._handle_apply_chat_template(
+            processing_class, messages, multi_modal_data={}, tools=tools, add_generation_prompt=False, tokenize=True
+        )[self.base_conv_wo_gen_prompt_end_pos :]
         return (len(self.input_ids) + len(content_ids)) > self.max_model_len, len(content_ids)
 
     def update_metrics(self, metrics: Any, tool_id: str) -> None:
@@ -430,11 +429,22 @@ class AsyncRolloutRequest(BaseModel):
             self.turn_tool_calls_detail.append(0)
         self.turn_tool_calls_detail[turn_index] = tool_calls_count
 
-    def initialize_conversation_from_prompt(self, messages: List[Message], tokenizer):
+    def initialize_conversation_from_prompt(
+        self,
+        messages: List[Message],
+        processing_class: Union[PreTrainedTokenizer, PreTrainedTokenizerFast, ProcessorMixin],
+    ):
         """Initialize conversation from initial prompt messages using unified tracking"""
         for msg in messages:
             if hasattr(msg, "content") and msg.content:
-                tokens = len(tokenizer.encode(msg.content))
+                tokens = self._handle_apply_chat_template(
+                    processing_class,
+                    [*BASE_CHAT_HISTORY, msg],
+                    multi_modal_data={},
+                    tools=None,
+                    add_generation_prompt=False,
+                    tokenize=True,
+                )[self.base_conv_wo_gen_prompt_end_pos :]
                 chars = len(msg.content)
                 tool_calls_count = 0
 
