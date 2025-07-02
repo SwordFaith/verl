@@ -72,7 +72,7 @@ def call_sandbox_api(
     run_timeout: int,
     memory_limit_mb: int,
     language: str = "python",
-) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:  # <-- Remove request_id parameter
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], str, str]:  # <-- Remove request_id parameter
     """
     Calls the remote sandbox API to execute code with retry logic for Gateway Timeout,
     using increasing delay between retries. Logs internal calls with a unique ID.
@@ -155,7 +155,7 @@ def call_sandbox_api(
             logger.info(
                 f"{log_prefix}Sandbox API call successful on attempt {attempt + 1}"
             )  # <-- Use internal log_prefix
-            return response.json(), None
+            return response.json(), None, payload, response_text
 
         except requests.exceptions.RequestException as e:
             last_error = f"{log_prefix}API Request Error: {e}"  # <-- Use internal log_prefix
