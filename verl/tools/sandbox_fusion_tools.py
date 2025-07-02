@@ -387,7 +387,14 @@ class SandboxFusionTool(BaseTool):
         for attempt in range(max_retries):
             try:
                 result_status, metadata = _process_single_case(
-                    0, None, None, self.sandbox_fusion_url, code, timeout, language
+                    case_index=0,
+                    stdin_data=None,
+                    expected_output=None,
+                    sandbox_fusion_url=self.sandbox_fusion_url,
+                    generation=code,
+                    timeout=timeout,
+                    memory_limit_mb=1024,
+                    language=language,
                 )
 
                 # Check for API request errors first
