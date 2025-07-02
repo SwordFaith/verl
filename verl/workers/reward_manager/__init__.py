@@ -20,4 +20,12 @@ from .prime import PrimeRewardManager
 from .multi_turn import MultiTurnRewardManager
 
 # Note(haibin.lin): no need to include all reward managers here in case of complicated dependencies
-__all__ = ["BatchRewardManager", "DAPORewardManager", "NaiveRewardManager", "PrimeRewardManager", "MultiTurnRewardManager", "register", "get_reward_manager_cls"]
+__all__ = [
+    "BatchRewardManager",
+    "DAPORewardManager",
+    "NaiveRewardManager",
+    "PrimeRewardManager",
+    "MultiTurnRewardManager",
+    "register",
+    "get_reward_manager_cls",
+]

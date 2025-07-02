@@ -96,10 +96,16 @@ class SearchExecutionWorker:
             return fn(*fn_args, **fn_kwargs)
 
 
-def init_search_execution_pool(num_workers: int, enable_global_rate_limit=True, rate_limit=10, mode: PoolMode = PoolMode.ThreadMode):
+def init_search_execution_pool(
+    num_workers: int, enable_global_rate_limit=True, rate_limit=10, mode: PoolMode = PoolMode.ThreadMode
+):
     """Initialize search execution pool."""
     if mode == PoolMode.ThreadMode:
-        return ray.remote(SearchExecutionWorker).options(max_concurrency=num_workers).remote(enable_global_rate_limit=enable_global_rate_limit, rate_limit=rate_limit)
+        return (
+            ray.remote(SearchExecutionWorker)
+            .options(max_concurrency=num_workers)
+            .remote(enable_global_rate_limit=enable_global_rate_limit, rate_limit=rate_limit)
+        )
     else:
         raise NotImplementedError("Process mode is not implemented yet")
 
@@ -155,7 +161,12 @@ class SearchTool(BaseTool):
         self.timeout = config.get("timeout", 30)
 
         self.enable_global_rate_limit = config.get("enable_global_rate_limit", True)
-        self.execution_pool = init_search_execution_pool(num_workers=self.num_workers, enable_global_rate_limit=self.enable_global_rate_limit, rate_limit=self.rate_limit, mode=PoolMode.ThreadMode)
+        self.execution_pool = init_search_execution_pool(
+            num_workers=self.num_workers,
+            enable_global_rate_limit=self.enable_global_rate_limit,
+            rate_limit=self.rate_limit,
+            mode=PoolMode.ThreadMode,
+        )
 
         # Retrieval service configuration
         self.retrieval_service_url = config.get("retrieval_service_url")
@@ -212,7 +223,9 @@ class SearchTool(BaseTool):
             self.tool_logger.debug(f"Search result for instance {instance_id}: {result_text}")
         return result_text, metadata
 
-    async def _execute_impl(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, bool, dict[str, Any]]:
+    async def _execute_impl(
+        self, instance_id: str, parameters: dict[str, Any], **kwargs
+    ) -> Tuple[str, float, bool, dict[str, Any]]:
         """Execute the search tool with enhanced metrics collection.
 
         Args:
@@ -234,13 +247,24 @@ class SearchTool(BaseTool):
                 self.tool_logger.error(f"[SearchTool] {error_msg} Received parameters: {parameters}")
 
             # Enhanced error metrics
-            specific_metrics = {"error_type": "invalid_parameters", "query_count": 0, "total_results": 0, "search_latency_ms": 0.0, "api_status": "parameter_error", "queries": [], "query_complexity_scores": [], "relevance_scores": []}
+            specific_metrics = {
+                "error_type": "invalid_parameters",
+                "query_count": 0,
+                "total_results": 0,
+                "search_latency_ms": 0.0,
+                "api_status": "parameter_error",
+                "queries": [],
+                "query_complexity_scores": [],
+                "relevance_scores": [],
+            }
             return json.dumps({"result": error_msg}), 0.0, False, specific_metrics
 
         # Execute search using Ray execution pool with timing
         search_start_time = time.time()
         try:
-            result_text, metadata = await self.execution_pool.execute.remote(self.execute_search, instance_id, query_list_from_params, self.retrieval_service_url, self.topk, timeout)
+            result_text, metadata = await self.execution_pool.execute.remote(
+                self.execute_search, instance_id, query_list_from_params, self.retrieval_service_url, self.topk, timeout
+            )
             search_end_time = time.time()
 
             # Store results in instance dictionary
@@ -252,22 +276,19 @@ class SearchTool(BaseTool):
                 "query_count": metadata.get("query_count", len(query_list_from_params)),
                 "total_results": metadata.get("total_results", 0),
                 "api_status": metadata.get("status", "unknown"),
-                "queries": query_list_from_params,
                 # Performance metrics
                 "search_latency_ms": (search_end_time - search_start_time) * 1000,
-                "avg_latency_per_query_ms": ((search_end_time - search_start_time) * 1000) / len(query_list_from_params) if query_list_from_params else 0,
-                "timeout_used": timeout,
-                "rate_limit_enabled": self.enable_global_rate_limit,
-                # Query analysis metrics
-                "query_complexity_scores": [self._calculate_query_complexity(q) for q in query_list_from_params],
-                "avg_query_length": sum(len(q) for q in query_list_from_params) / len(query_list_from_params) if query_list_from_params else 0,
-                "unique_query_ratio": len(set(query_list_from_params)) / len(query_list_from_params) if query_list_from_params else 0,
+                "avg_latency_per_query_ms": ((search_end_time - search_start_time) * 1000) / len(query_list_from_params)
+                if query_list_from_params
+                else 0,
                 # Results analysis
-                "results_per_query": metadata.get("total_results", 0) / len(query_list_from_params) if query_list_from_params else 0,
+                "results_per_query": metadata.get("total_results", 0) / len(query_list_from_params)
+                if query_list_from_params
+                else 0,
                 "relevance_scores": metadata.get("relevance_scores", []),
                 "result_char_length": len(result_text) if result_text else 0,
                 # Error tracking
-                "error_type": None,
+                "error_type": metadata.get("error_type", "unknown"),
             }
 
             # Determine success based on API status and results

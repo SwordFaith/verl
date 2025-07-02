@@ -13,20 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import copy
-import importlib
-import importlib.util
 import json
 import logging
 import os
-import sys
 import threading
 import time
 from logging.handlers import RotatingFileHandler
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
 import torch.distributed as dist
-from omegaconf import OmegaConf
 
 from .schemas import OpenAIFunctionToolSchema
 
@@ -105,7 +101,17 @@ class ToolLogger:
 
     def _apply_default_config(self, user_config: dict) -> dict:
         """Apply default configuration and merge with user config."""
-        default_config = {"enable": True, "separate_by_rank": True, "outputs": {"console": {"enable": True, "level": "ERROR", "apply_filters": True}, "file": {"enable": True, "level": "WARNING", "apply_filters": False}}, "noise_filters": {}, "test_mode": {"enable": False}, "tool_specific": {}}
+        default_config = {
+            "enable": True,
+            "separate_by_rank": True,
+            "outputs": {
+                "console": {"enable": True, "level": "ERROR", "apply_filters": True},
+                "file": {"enable": True, "level": "WARNING", "apply_filters": False},
+            },
+            "noise_filters": {},
+            "test_mode": {"enable": False},
+            "tool_specific": {},
+        }
 
         merged = copy.deepcopy(default_config)
         self._deep_update(merged, user_config)
@@ -143,7 +149,9 @@ class ToolLogger:
         with self._lock:
             # Create unique logger name with rank, process, and instance isolation
             if self.config.get("separate_by_rank", True):
-                logger_name = f"tool_{self.tool_name}_rank_{self.rank_info['global_rank']}_pid_{os.getpid()}_{self.instance_id}"
+                logger_name = (
+                    f"tool_{self.tool_name}_rank_{self.rank_info['global_rank']}_pid_{os.getpid()}_{self.instance_id}"
+                )
             else:
                 logger_name = f"tool_{self.tool_name}_pid_{os.getpid()}_{self.instance_id}"
 
@@ -225,7 +233,10 @@ class ToolLogger:
 
     def _get_formatter(self):
         """Get log formatter with complete traceability information."""
-        format_str = f"%(asctime)s - {self.tool_name} - %(levelname)s - [Rank:{self.rank_info['global_rank']},PID:{os.getpid()},Instance:{self.instance_id}] - %(message)s"
+        format_str = (
+            f"%(asctime)s - {self.tool_name} - %(levelname)s - "
+            f"[Rank:{self.rank_info['global_rank']},PID:{os.getpid()},Instance:{self.instance_id}] - %(message)s"
+        )
         return logging.Formatter(format_str)
 
     def log(self, level: str, message: str, extra_data: dict = None):
@@ -235,7 +246,14 @@ class ToolLogger:
 
         self._ensure_initialized()
         with self._lock:
-            log_data = {"timestamp": time.time(), "rank": self.rank_info["global_rank"], "tool": self.tool_name, "instance": self.instance_id, "message": message, **(extra_data or {})}
+            log_data = {
+                "timestamp": time.time(),
+                "rank": self.rank_info["global_rank"],
+                "tool": self.tool_name,
+                "instance": self.instance_id,
+                "message": message,
+                **(extra_data or {}),
+            }
             getattr(self.logger, level.lower())(json.dumps(log_data))
 
     def debug(self, message: str, extra_data: dict = None):
@@ -362,7 +380,14 @@ class BaseTool:
             self.tool_logger = None
 
         if self.tool_logger:
-            self.tool_logger.debug("Tool initialized", {"tool_class": self.__class__.__name__, "tool_name": self.name, "schema": self.tool_schema.model_dump(exclude_unset=True, exclude_none=True)})
+            self.tool_logger.debug(
+                "Tool initialized",
+                {
+                    "tool_class": self.__class__.__name__,
+                    "tool_name": self.name,
+                    "schema": self.tool_schema.model_dump(exclude_unset=True, exclude_none=True),
+                },
+            )
         else:
             print(json.dumps(self.tool_schema.model_dump(exclude_unset=True, exclude_none=True), indent=2))
 
@@ -417,7 +442,9 @@ class BaseTool:
         else:
             return instance_id
 
-    async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, Dict[str, Any]]:
+    async def execute(
+        self, instance_id: str, parameters: dict[str, Any], **kwargs
+    ) -> Tuple[str, float, Dict[str, Any]]:
         """Simplified execute method returning basic execution info instead of full ToolMetrics.
 
         Args:
@@ -434,7 +461,14 @@ class BaseTool:
 
         # Log execution start (if logger available)
         if self.tool_logger:
-            self.tool_logger.info("EXECUTION_START", {"instance_id": instance_id, "parameters_size": len(str(parameters)), "tool_class": self.__class__.__name__})
+            self.tool_logger.info(
+                "EXECUTION_START",
+                {
+                    "instance_id": instance_id,
+                    "parameters_size": len(str(parameters)),
+                    "tool_class": self.__class__.__name__,
+                },
+            )
 
         try:
             response, reward, success, tool_specific_info = await self._execute_impl(instance_id, parameters, **kwargs)
@@ -465,7 +499,9 @@ class BaseTool:
                         "success": success,
                         "latency_ms": execution_info["latency_ms"],
                         "response_preview": response[:200] if response else None,
-                        "execution_info": {k: v for k, v in execution_info.items() if k != "tool_specific_metrics"},  # Exclude large nested data
+                        "execution_info": {
+                            k: v for k, v in execution_info.items() if k != "tool_specific_metrics"
+                        },  # Exclude large nested data
                     },
                 )
 
@@ -475,11 +511,26 @@ class BaseTool:
             end_time = time.time()
 
             # Create execution info for exception case
-            execution_info = {"success": False, "latency_ms": (end_time - start_time) * 1000, "error_type": "execution_exception", "exception_message": str(e), "response_char_length": 0, "tool_specific_metrics": {}}
+            execution_info = {
+                "success": False,
+                "latency_ms": (end_time - start_time) * 1000,
+                "error_type": "execution_exception",
+                "exception_message": str(e),
+                "response_char_length": 0,
+                "tool_specific_metrics": {},
+            }
 
             # Log exception with context
             if self.tool_logger:
-                self.tool_logger.error("EXECUTION_EXCEPTION", {"instance_id": instance_id, "exception": str(e), "exception_type": type(e).__name__, "latency_ms": execution_info["latency_ms"]})
+                self.tool_logger.error(
+                    "EXECUTION_EXCEPTION",
+                    {
+                        "instance_id": instance_id,
+                        "exception": str(e),
+                        "exception_type": type(e).__name__,
+                        "latency_ms": execution_info["latency_ms"],
+                    },
+                )
 
             # Re-raise with execution_info available in context
             raise e
@@ -489,12 +540,21 @@ class BaseTool:
         if not response:
             return False
 
-        noise_indicators = ["TimeLimitExceeded", "time limit exceed", "timeout", "Gateway Timeout", "Connection refused", "retry"]
+        noise_indicators = [
+            "TimeLimitExceeded",
+            "time limit exceed",
+            "timeout",
+            "Gateway Timeout",
+            "Connection refused",
+            "retry",
+        ]
 
         response_lower = response.lower()
         return any(indicator.lower() in response_lower for indicator in noise_indicators)
 
-    async def _execute_impl(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, bool, Dict[str, Any]]:
+    async def _execute_impl(
+        self, instance_id: str, parameters: dict[str, Any], **kwargs
+    ) -> Tuple[str, float, bool, Dict[str, Any]]:
         """Implementation method for tool execution. Override this in subclasses.
 
         Args:
@@ -527,48 +587,3 @@ class BaseTool:
             instance_id: The instance id of the tool.
         """
         pass
-
-
-def initialize_tools_from_config(tools_config_file, tool_logging_config: dict = None) -> List[BaseTool]:
-    """Initialize tools from config file with optional tool logging configuration.
-
-    Args:
-        tools_config_file: The config file of the tools.
-        tool_logging_config: Optional tool logging configuration to inject.
-
-    Returns:
-        A list of tools.
-    """
-    tools_config = OmegaConf.load(tools_config_file)
-
-    tool_list = []
-    for tool_config in tools_config.tools:
-        cls_name = tool_config.class_name
-        module_name, class_name = cls_name.rsplit(".", 1)
-
-        if module_name not in sys.modules:
-            spec = importlib.util.find_spec(module_name)
-            assert spec is not None, f"unable to find {cls_name}"
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-        else:
-            module = sys.modules[module_name]
-
-        tool_cls = getattr(module, class_name)
-
-        if tool_config.get("tool_schema", None) is None:
-            tool_schema = None
-        else:
-            tool_schema_dict = OmegaConf.to_container(tool_config.tool_schema, resolve=True)
-            tool_schema = OpenAIFunctionToolSchema.parse_obj(tool_schema_dict)
-
-        # Prepare tool configuration with optional logging config
-        tool_config_dict = OmegaConf.to_container(tool_config.config, resolve=True)
-        if tool_logging_config:
-            tool_config_dict["tool_logging_config"] = tool_logging_config
-
-        tool = tool_cls(config=tool_config_dict, tool_schema=tool_schema)
-        tool_list.append(tool)
-
-    return tool_list

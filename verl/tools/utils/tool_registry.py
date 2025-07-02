@@ -78,7 +78,16 @@ def get_tool_class(cls_name):
     return tool_cls
 
 
-def initialize_tools_from_config(tools_config_file):
+def initialize_tools_from_config(tools_config_file, tool_logging_config: dict = None):
+    """Initialize tools from config file with optional tool logging configuration.
+
+    Args:
+        tools_config_file: The config file of the tools.
+        tool_logging_config: Optional tool logging configuration to inject.
+
+    Returns:
+        A list of tools.
+    """
     tools_config = OmegaConf.load(tools_config_file)
     tool_list = []
     for tool_config in tools_config.tools:
@@ -88,20 +97,24 @@ def initialize_tools_from_config(tools_config_file):
 
         match tool_type:
             case ToolType.NATIVE:
-                tool_schema_dict = OmegaConf.to_container(tool_config.tool_schema, resolve=True)
-                tool_schema = OpenAIFunctionToolSchema.model_validate(tool_schema_dict)
+                if tool_config.get("tool_schema", None) is None:
+                    tool_schema = None
+                else:
+                    tool_schema_dict = OmegaConf.to_container(tool_config.tool_schema, resolve=True)
+                    tool_schema = OpenAIFunctionToolSchema.model_validate(tool_schema_dict)
+                # Prepare tool configuration with optional logging config
+                tool_config_dict = OmegaConf.to_container(tool_config.config, resolve=True)
+                if tool_logging_config:
+                    tool_config_dict["tool_logging_config"] = tool_logging_config
                 tool = tool_cls(
-                    config=OmegaConf.to_container(tool_config.config, resolve=True),
+                    config=tool_config_dict,
                     tool_schema=tool_schema,
                 )
                 tool_list.append(tool)
-                break
             case ToolType.MCP:
                 loop = asyncio.get_event_loop()
                 mcp_tools = loop.run_until_complete(initialize_mcp_tool(tool_cls, tool_config))
                 tool_list.extend(mcp_tools)
-                break
             case _:
                 raise NotImplementedError
-
     return tool_list
