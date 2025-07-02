@@ -218,7 +218,12 @@ class SandboxFusionTool(BaseTool):
                 # === Error Classification ===
                 "error_type": "empty_code",
             }
-            return "no code parsed", 0.0, False, specific_metrics
+            return (
+                "no code parsed, maybe there is some format error in the tool_call parameters",
+                0.0,
+                False,
+                specific_metrics,
+            )
 
         # Execute code based on mode and get both result, success status, and extracted API metrics
         if self.mode == "run_jupyter":
@@ -287,7 +292,7 @@ class SandboxFusionTool(BaseTool):
             elif raw_response and raw_response.strip():
                 return raw_response.strip()
             else:
-                return "Execution completed successfully"
+                return "Execution completed successfully, but no output logged in stdout."
         else:
             # Error: Clean error message + actionable suggestion
             if api_metadata.get("stderr"):
@@ -649,7 +654,7 @@ class SandboxFusionTool(BaseTool):
     def get_sim_jupyter_mode_result(self, instance_id, timeout: Optional[int] = None):
         """Get sim jupyter execution result and return (result, success, extracted_api_metrics)"""
         if len(self._instance_dict[instance_id]["cells"]) == 0:
-            return "no code parsed", False, {}
+            return "no code parsed, maybe there is some format error in the tool_call parameters", False, {}
         elif len(self._instance_dict[instance_id]["cells"]) == 1:
             prev_cells = []
         else:

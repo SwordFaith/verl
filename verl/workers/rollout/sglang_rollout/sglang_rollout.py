@@ -313,6 +313,8 @@ class SGLangRollout(BaseRollout):
 
         self.processing_class = processing_class
 
+        self._use_token_out = self.config.get("use_token_out", False)
+
         try:
             # This is when processing_class is a tokenizer
             self.pad_token_id = self.processing_class.pad_token_id
@@ -923,6 +925,8 @@ class SGLangRollout(BaseRollout):
             elif _req.state == AsyncRolloutRequestStateEnum.TOOL_CALLING:
                 if _req.messages[-1].tool_calls is not None:
                     parsed_tool_calls = _req.messages[-1].tool_calls
+                    if self._use_token_out:
+                        _req.messages[-1].tool_calls = None
                     is_tool_call_overlong = False
                     tool_call_responses = []
                     tool_call_results = []
@@ -991,10 +995,14 @@ class SGLangRollout(BaseRollout):
                 # Video support is not implemented yet
                 output = await self._handle_engine_call(_req, request_sampling_params, image_data=image_data)
                 content = output["text"]
+                if self._use_token_out:
+                    content_ids = output["output_ids"]
+                else:
+                    content_ids = None
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
                 current_turns += 1
                 if finish_reason_type == FinishReasonTypeEnum.LENGTH:
-                    turn_stats = _req.add_assistant_message(self.processing_class, content)
+                    turn_stats = _req.add_assistant_message(self.processing_class, content, content_ids=content_ids)
                     _req.track_turn("assistant", turn_stats)
                     # Add 0.0 reward for non-tool  assistant turn
                     _req.turn_level_rewards.append(0.0)
@@ -1057,14 +1065,26 @@ class SGLangRollout(BaseRollout):
                             # Add truncation metrics to request for later collection
                             _req.tool_truncation_metrics.append(truncation_metrics)
                         if len(parsed_tool_calls) > 0:
-                            turn_stats = _req.add_assistant_message(
-                                self.processing_class, normed_content, tool_calls=parsed_tool_calls
-                            )
+                            if self._use_token_out:
+                                turn_stats = _req.add_assistant_message(
+                                    self.processing_class,
+                                    content,
+                                    content_ids=content_ids,
+                                    tool_calls=parsed_tool_calls,
+                                )
+                            else:
+                                turn_stats = _req.add_assistant_message(
+                                    self.processing_class,
+                                    normed_content,
+                                    tool_calls=parsed_tool_calls,
+                                )
                             _req.track_turn("assistant", turn_stats)
                             # Add 0.0 reward for assistant turn with tool calls (actual tool rewards tracked separately)
                             _req.turn_level_rewards.append(0.0)
                         else:
-                            turn_stats = _req.add_assistant_message(self.processing_class, content)
+                            turn_stats = _req.add_assistant_message(
+                                self.processing_class, content, content_ids=content_ids
+                            )
                             _req.track_turn("assistant", turn_stats)
                             # Add 0.0 reward for non-tool assistant turn
                             _req.turn_level_rewards.append(0.0)
@@ -1076,6 +1096,7 @@ class SGLangRollout(BaseRollout):
                         turn_stats = _req.add_assistant_message(
                             self.processing_class,
                             content,
+                            content_ids=content_ids,
                         )
                         _req.track_turn("assistant", turn_stats)
                         # Add 0.0 reward for non-tool assistant turn
