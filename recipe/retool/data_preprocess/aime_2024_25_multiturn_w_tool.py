@@ -26,7 +26,7 @@ from verl.utils.hdfs_io import copy, makedirs
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--local_dir", default="~/data/retool_aime2024")
+    parser.add_argument("--local_dir", default="~/data/retool_aime2024_25")
     parser.add_argument("--hdfs_dir", default=None)
 
     args = parser.parse_args()
@@ -46,18 +46,23 @@ if __name__ == "__main__":
             prompt = [
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that can solve math problems with interaction Code Interpreter by Python code.",
+                    "content": (
+                        "You are a helpful assistant that can solve math problems with interaction "
+                        "Code Interpreter by Python code."
+                    ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        "Solve the following problem step by step. You now have the ability to selectively write executable Python code to enhance your reasoning process.\n\n"
+                        "Solve the following problem step by step. You now have the ability to selectively "
+                        "write executable Python code to enhance your reasoning process.\n\n"
                         f"**user question:**\n{question}\n\n"
-                        "Remember to place the final answer in the last part using the format: \n<answer>\n\\boxed{'The final answer goes here.'}\n</answer>"
+                        "Remember to place the final answer in the last part using the format: "
+                        "\n<answer>\n\\boxed{'The final answer goes here.'}\n</answer>"
                     ),
                 },
             ]
-            reward_model = {"ground_truth": example["Answer"], "style": "rule-lighteval/MATH_v2"}
+            reward_model = {"ground_truth": int(example["Answer"]), "style": "rule-lighteval/MATH_v2"}
             extra_info = {
                 "index": idx,
                 "raw_prompt": question,
@@ -70,34 +75,40 @@ if __name__ == "__main__":
                     },
                 },
             }
-            return {
+            res = {
                 "data_source": "retool_aime2024",
                 "prompt": prompt,
                 "ability": "MATH",
                 "reward_model": reward_model,
                 "extra_info": extra_info,
             }
+            return res
 
         return process_fn
 
     def make_map_fn_2025(split):
         def process_fn(example, idx):
-            question = example["problem"]
+            question = example.pop("problem")
             prompt = [
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant that can solve math problems with interaction Code Interpreter by Python code.",
+                    "content": (
+                        "You are a helpful assistant that can solve math problems with interaction "
+                        "Code Interpreter by Python code."
+                    ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        "Solve the following problem step by step. You now have the ability to selectively write executable Python code to enhance your reasoning process.\n\n"
+                        "Solve the following problem step by step. You now have the ability to selectively "
+                        "write executable Python code to enhance your reasoning process.\n\n"
                         f"**user question:**\n{question}\n\n"
-                        "Remember to place the final answer in the last part using the format: \n<answer>\n\\boxed{'The final answer goes here.'}\n</answer>"
+                        "Remember to place the final answer in the last part using the format: "
+                        "\n<answer>\n\\boxed{'The final answer goes here.'}\n</answer>"
                     ),
                 },
             ]
-            reward_model = {"ground_truth": example["answer"], "style": "rule-lighteval/MATH_v2"}
+            reward_model = {"ground_truth": int(example["answer"]), "style": "rule-lighteval/MATH_v2"}
             extra_info = {
                 "index": idx,
                 "raw_prompt": question,
@@ -110,20 +121,25 @@ if __name__ == "__main__":
                     },
                 },
             }
-            return {
+            res = {
                 "data_source": "retool_aime2025",
                 "prompt": prompt,
                 "ability": "MATH",
                 "reward_model": reward_model,
                 "extra_info": extra_info,
             }
+            return res
 
         return process_fn
 
-    aime_2024_dataset = aime_2024_dataset.map(function=make_map_fn_2024("train"), with_indices=True)
-    aime_2025_dataset = aime_2025_dataset.map(function=make_map_fn_2025("train"), with_indices=True)
+    aime_2024_train_dataset = aime_2024_dataset.map(
+        function=make_map_fn_2024("train"), with_indices=True, remove_columns=aime_2024_dataset.column_names
+    )
+    aime_2025_train_dataset = aime_2025_dataset.map(
+        function=make_map_fn_2025("train"), with_indices=True, remove_columns=aime_2025_dataset.column_names
+    )
 
-    train_dataset = datasets.concatenate_datasets([aime_2024_dataset, aime_2025_dataset])
+    train_dataset = datasets.concatenate_datasets([aime_2024_train_dataset, aime_2025_train_dataset])
 
     local_dir = args.local_dir
     hdfs_dir = args.hdfs_dir

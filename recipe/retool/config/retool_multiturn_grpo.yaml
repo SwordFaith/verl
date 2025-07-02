@@ -18,7 +18,7 @@ actor_rollout_ref:
     name: sglang
     multi_turn:
       enable: True
-      max_turns: 20
+      max_assistant_turns: 20
     val_kwargs:
       temperature: 0.6
       top_k: -1
