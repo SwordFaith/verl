@@ -30,7 +30,9 @@ class CustomSandboxFusionTool(SandboxFusionTool):
         super().__init__(config, tool_schema)
         self.code_pattern = re.compile(r"```python(.*?)```", re.DOTALL)
 
-    async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs) -> Tuple[str, float, dict]:
+    async def _execute_impl(
+        self, instance_id: str, parameters: dict[str, Any], **kwargs
+    ) -> Tuple[str, float, bool, dict]:
         code = parameters["code"]
         matches = self.code_pattern.findall(code)
         if matches:
@@ -51,8 +53,41 @@ class CustomSandboxFusionTool(SandboxFusionTool):
         if not isinstance(code, str):
             code = str(code)
 
-        result = await self.execution_pool.execute.remote(self.execute_code, instance_id, code, timeout, language)
-        return result, result, result.strip()
+        result, success, extracted_api_metrics = await self.execution_pool.execute.remote(
+            self.execute_code, instance_id, code, timeout, language
+        )
+        # Use extracted API metrics directly
+        execution_metadata = extracted_api_metrics or {}
+        # Calculate detailed code metrics (prioritize lines_of_code as primary metric)
+        code_lines = [line for line in code.split("\n") if line.strip()]
+        effective_lines_count = len(code_lines)
+        # total_lines_count = len(code.split("\n"))
+
+        # Essential metrics for sandbox fusion tool (focus on training-critical data)
+        error_msg = "" if success else str(result)
+        api_status = execution_metadata.get("api_execution_status", "unknown")
+
+        specific_metrics = {
+            # === Primary Metrics (training critical) ===
+            "lines_of_code": effective_lines_count,  # PRIMARY: code complexity indicator
+            "execution_time_ms": execution_metadata.get("api_execution_time_ms", 0.0),  # Real API timing
+            "return_code": execution_metadata.get("api_return_code", 0 if success else 1),  # Exit status
+            "execution_status": api_status,  # API status
+            "execution_mode": self.mode,  # run_code/run_jupyter/sim_jupyter
+            # === Secondary Metrics (analytics) ===
+            "has_stdout": bool(execution_metadata.get("has_stdout", result and success)),
+            "has_stderr": bool(execution_metadata.get("has_stderr", not success)),
+            "has_timeout": execution_metadata.get("has_timeout", False),  # Timeout detection
+            # === Jupyter-specific (when applicable) ===
+            "display_object_count": execution_metadata.get("display_object_count", 0),
+            # === Fine-grained Error Classification ===
+            "error_type": self._classify_error_type(error_msg, api_status) if not success else None,
+        }
+
+        # Calculate reward based on execution success
+        reward = 0.001 if success else -0.01
+
+        return result, reward, success, specific_metrics
 
 
 answer_format = """\nThe answer format must be: \\boxed{'The final answer goes here.'}"""
