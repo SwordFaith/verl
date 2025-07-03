@@ -398,7 +398,7 @@ class SandboxFusionTool(BaseTool):
                     sandbox_fusion_url=self.sandbox_fusion_url,
                     generation=code,
                     timeout=timeout,
-                    memory_limit_mb=1024,
+                    memory_limit_mb=self.memory_limit_mb,
                     language=language,
                 )
 
