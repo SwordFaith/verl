@@ -62,7 +62,7 @@ if __name__ == "__main__":
                     ),
                 },
             ]
-            reward_model = {"ground_truth": int(example["Answer"]), "style": "rule-lighteval/MATH_v2"}
+            reward_model = {"ground_truth": str(example["Answer"]), "style": "rule-lighteval/MATH_v2"}
             extra_info = {
                 "index": idx,
                 "raw_prompt": question,
@@ -108,7 +108,7 @@ if __name__ == "__main__":
                     ),
                 },
             ]
-            reward_model = {"ground_truth": int(example["answer"]), "style": "rule-lighteval/MATH_v2"}
+            reward_model = {"ground_truth": str(example["answer"]), "style": "rule-lighteval/MATH_v2"}
             extra_info = {
                 "index": idx,
                 "raw_prompt": question,

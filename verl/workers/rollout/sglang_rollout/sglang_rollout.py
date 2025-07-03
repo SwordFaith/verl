@@ -285,6 +285,7 @@ class SGLangRollout(BaseRollout):
         self.config = config
         self._device_mesh_cpu = device_mesh
         self.tool_logging_config = tool_logging_config or {}
+        self._use_token_out = self.config.get("use_token_out", False)
         os.environ.setdefault("SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK", "true")
 
         (
@@ -312,8 +313,6 @@ class SGLangRollout(BaseRollout):
         self._init_sampling_params(**kwargs)
 
         self.processing_class = processing_class
-
-        self._use_token_out = self.config.get("use_token_out", False)
 
         try:
             # This is when processing_class is a tokenizer
@@ -437,7 +436,7 @@ class SGLangRollout(BaseRollout):
                 mm_attention_backend="fa3",
                 attention_backend="fa3",
                 # In async mode, we want token in token out.
-                skip_tokenizer_init=self.config.mode == "async",
+                skip_tokenizer_init=self.config.mode == "async" or self._use_token_out,
             )
         else:
             self._engine = None
@@ -994,10 +993,11 @@ class SGLangRollout(BaseRollout):
                     break
                 # Video support is not implemented yet
                 output = await self._handle_engine_call(_req, request_sampling_params, image_data=image_data)
-                content = output["text"]
                 if self._use_token_out:
                     content_ids = output["output_ids"]
+                    content = self.processing_class.decode(content_ids, skip_special_tokens=True)
                 else:
+                    content = output["text"]
                     content_ids = None
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
                 current_turns += 1
